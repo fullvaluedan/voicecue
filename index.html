@@ -301,6 +301,42 @@ function loadJSON(key, fallback){ try{ var v = localStorage.getItem(key); return
 function save(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
 function saveSettings(){ save(LS_SETTINGS, settings); }
 
+/* Native speech bridge — active only inside the VoiceCue iOS app (WKWebView),
+   where Apple's SFSpeechRecognizer streams transcripts in via window.__nativeSpeech. */
+if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.speech) {
+  (function(){
+    var active = null;
+    function NativeSR(){
+      this.continuous = true; this.interimResults = true; this.lang = "";
+      this._finals = []; this._partial = "";
+    }
+    NativeSR.prototype.start = function(){
+      active = this; this._finals = []; this._partial = "";
+      window.webkit.messageHandlers.speech.postMessage({cmd:"start", lang:this.lang || ""});
+    };
+    NativeSR.prototype.stop = function(){
+      if (active === this) active = null;
+      window.webkit.messageHandlers.speech.postMessage({cmd:"stop"});
+      var self = this;
+      setTimeout(function(){ if (self.onend) self.onend(); }, 50);
+    };
+    NativeSR.prototype.abort = NativeSR.prototype.stop;
+    window.__nativeSpeech = {
+      result: function(transcript, isFinal){
+        if (!active) return;
+        if (isFinal){ if (transcript) active._finals.push(transcript); active._partial = ""; }
+        else active._partial = transcript;
+        var list = active._finals.map(function(t){ return {0:{transcript:t}, isFinal:true, length:1}; });
+        if (active._partial) list.push({0:{transcript:active._partial}, isFinal:false, length:1});
+        if (active.onresult && list.length) active.onresult({results:list, resultIndex:0});
+      },
+      error: function(code){ if (active && active.onerror) active.onerror({error:code}); },
+      ended: function(){ var a = active; if (a){ active = null; if (a.onend) a.onend(); } }
+    };
+    window.SpeechRecognition = NativeSR;
+    window.webkitSpeechRecognition = NativeSR;
+  })();
+}
 var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
 var micBlocked = false; // set true if permission is denied at runtime
 
