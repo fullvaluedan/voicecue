@@ -270,6 +270,7 @@
       <button class="toggle" id="tglGuide">Guide line<span class="pill"></span></button>
       <button class="toggle" id="tglCount">Countdown<span class="pill"></span></button>
       <button class="toggle" id="tglPerfect">Perfect takes<span class="pill"></span></button>
+      <button class="toggle" id="tglFull">Auto fullscreen<span class="pill"></span></button>
     </div>
     <p class="sheet-note">In voice mode, scrolling starts when you start reading and pauses whenever you stop or go off-script. Drag the script to any point and start reading from there — tracking re-anchors to the line at the arrow. Perfect takes grades each sentence — stumbles, filler words, or mid-sentence pauses send you back to retake the line until it's clean (deliberate pauses at commas and sentence ends are always fine). Pinch with two fingers to resize the text.</p>
   </div>
@@ -284,7 +285,7 @@ var $ = function(id){ return document.getElementById(id); };
 
 /* ---------------- State & storage ---------------- */
 var LS_SCRIPTS = "voicecue.scripts", LS_SETTINGS = "voicecue.settings";
-var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false };
+var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false, autoFull:true };
 var settings = loadJSON(LS_SETTINGS, defaults);
 for (var k in defaults) if (!(k in settings)) settings[k] = defaults[k];
 var scripts = loadJSON(LS_SCRIPTS, null);
@@ -527,6 +528,7 @@ function applySettings(){
   $("tglGuide").classList.toggle("on", !!settings.guide);
   $("tglCount").classList.toggle("on", !!settings.countdown);
   $("tglPerfect").classList.toggle("on", !!settings.perfect);
+  $("tglFull").classList.toggle("on", !!settings.autoFull);
   $("modeVoice").classList.toggle("sel", settings.mode==="voice");
   $("modeManual").classList.toggle("sel", settings.mode==="manual");
   $("orAuto").classList.toggle("sel", settings.orient!=="landscape");
@@ -827,7 +829,12 @@ function startPrompter(s){
   acquireWake();
   cancelAnimationFrame(rafId);
   rafId = requestAnimationFrame(frame);
-  // iOS requires the mic to start inside the user's tap — prime it now, arm it when the countdown ends
+  // this tap is our one user gesture: use it for fullscreen and to prime the mic (iOS requires both in-gesture)
+  if (settings.autoFull && !(navigator.standalone)) enterFullscreen(null);
+  if (settings.orient === "landscape" && screen.orientation && screen.orientation.lock){
+    // native lock (Android, in fullscreen); if it works, the CSS rotation fallback stands down on its own
+    setTimeout(function(){ try { screen.orientation.lock("landscape").catch(function(){}); } catch(e){} }, 350);
+  }
   recArmed = false; gotSpeech = false;
   if (settings.mode === "voice") startRecognition();
   if (settings.countdown) runCountdown(begin); else begin();
@@ -844,7 +851,7 @@ function begin(){
 }
 function exitPrompter(){
   running = false; playing = false; recArmed = false;
-  stopRecognition(); stopMeter();
+  stopRecognition(); stopMeter(); leaveFullscreen();
   cancelAnimationFrame(rafId);
   releaseWake();
   $("countdown").classList.remove("on");
@@ -928,21 +935,26 @@ scroller.addEventListener("touchend", function(e){
 
 $("prExit").onclick = function(ev){ ev.stopPropagation(); exitPrompter(); };
 $("prSettings").onclick = function(ev){ ev.stopPropagation(); $("sheet").classList.add("open"); };
-$("prFull").onclick = function(ev){
-  ev.stopPropagation();
-  var d = document;
-  if (d.fullscreenElement || d.webkitFullscreenElement){
-    (d.exitFullscreen || d.webkitExitFullscreen).call(d);
-    return;
-  }
-  var el = d.documentElement;
+function enterFullscreen(onFail){
+  var el = document.documentElement;
   var fn = el.requestFullscreen || el.webkitRequestFullscreen;
   if (fn){
     try {
       var p = fn.call(el);
-      if (p && p.catch) p.catch(fullscreenTip);
-    } catch(e){ fullscreenTip(); }
-  } else fullscreenTip();
+      if (p && p.catch) p.catch(function(){ if (onFail) onFail(); });
+    } catch(e){ if (onFail) onFail(); }
+  } else if (onFail) onFail();
+}
+function leaveFullscreen(){
+  var d = document;
+  if (d.fullscreenElement || d.webkitFullscreenElement){
+    try { (d.exitFullscreen || d.webkitExitFullscreen).call(d); } catch(e){}
+  }
+}
+$("prFull").onclick = function(ev){
+  ev.stopPropagation();
+  if (document.fullscreenElement || document.webkitFullscreenElement) leaveFullscreen();
+  else enterFullscreen(fullscreenTip);
 };
 function fullscreenTip(){
   toast("This browser won't let a web page go fullscreen. On iPhone: tap aA in the address bar → Hide Toolbar, or Share → Add to Home Screen and launch VoiceCue from the icon for a true fullscreen app.", 7000);
@@ -1006,7 +1018,7 @@ $("modeVoice").onclick = function(){ setMode("voice"); };
 $("modeManual").onclick = function(){ setMode("manual"); };
 $("orAuto").onclick = function(){ settings.orient = "auto"; saveSettings(); applySettings(); };
 $("orLand").onclick = function(){ settings.orient = "landscape"; saveSettings(); applySettings(); };
-[["tglMirror","mirror"],["tglGuide","guide"],["tglCount","countdown"],["tglPerfect","perfect"]].forEach(function(pair){
+[["tglMirror","mirror"],["tglGuide","guide"],["tglCount","countdown"],["tglPerfect","perfect"],["tglFull","autoFull"]].forEach(function(pair){
   $(pair[0]).onclick = function(){ settings[pair[1]] = !settings[pair[1]]; saveSettings(); applySettings(); };
 });
 
