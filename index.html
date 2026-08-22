@@ -1,0 +1,1061 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>VoiceCue</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap">
+<style>
+  /* VoiceCue — single-theme studio-dark tool. All colors painted explicitly. */
+  :root{
+    --ground:#0B0C0E;
+    --panel:#15171B;
+    --panel-2:#1C1F24;
+    --line:#272B32;
+    --ink:#F2F3F5;
+    --muted:#9BA1AB;
+    --accent:#F2B33D;
+    --accent-ink:#161006;
+    --live:#FF4D4D;
+    --ok:#4DC97B;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--ground);color:var(--ink);
+    font-family:'Archivo',system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;overscroll-behavior:none;
+  }
+  button{font-family:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  input,textarea{font-family:inherit;color:var(--ink)}
+  .screen{display:none;min-height:100dvh}
+  .screen.active{display:flex;flex-direction:column}
+
+  /* ---------- Library ---------- */
+  #library{padding:max(20px,env(safe-area-inset-top)) 20px 40px;max-width:640px;margin:0 auto;width:100%}
+  .brand{display:flex;align-items:baseline;gap:10px;margin:18px 0 4px}
+  .brand h1{font-size:28px;font-weight:700;letter-spacing:-.01em;margin:0}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--live);align-self:center}
+  .tagline{color:var(--muted);font-size:14px;margin:0 0 18px;line-height:1.5}
+  .cap-badge{display:inline-flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid var(--line);border-radius:999px;padding:6px 12px;color:var(--muted);margin-bottom:22px}
+  .cap-badge .led{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .cap-badge.no .led{background:var(--live)}
+  .chip-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
+    border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:6px 12px;margin:0 0 22px 8px}
+  .lib-label{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:8px 0 10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px;
+    display:flex;align-items:center;gap:12px}
+  .card .meta{flex:1;min-width:0}
+  .card .title{font-weight:600;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .sub{color:var(--muted);font-size:12.5px;margin-top:3px;font-variant-numeric:tabular-nums}
+  .icon-btn{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;flex:none;
+    border:1px solid var(--line);background:var(--panel-2);font-size:17px}
+  .icon-btn.play{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-size:19px}
+  .new-btn{width:100%;padding:15px;border-radius:14px;border:1px dashed var(--line);color:var(--muted);
+    font-size:15px;font-weight:500;margin-top:4px}
+  .new-btn:active{background:var(--panel)}
+  .foot-note{color:var(--muted);font-size:12.5px;line-height:1.6;margin-top:26px;border-top:1px solid var(--line);padding-top:16px}
+  .foot-note strong{color:var(--ink);font-weight:600}
+
+  /* ---------- Editor ---------- */
+  #editor{padding:max(16px,env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));max-width:640px;margin:0 auto;width:100%}
+  .ed-bar{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .ed-bar .spacer{flex:1}
+  .txt-btn{font-size:15px;font-weight:600;padding:10px 16px;border-radius:11px}
+  .txt-btn.primary{background:var(--accent);color:var(--accent-ink)}
+  .txt-btn.ghost{color:var(--muted)}
+  .txt-btn.danger{color:var(--live)}
+  #edTitle{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:13px 14px;font-size:16px;font-weight:600;margin-bottom:10px;outline:none}
+  #edTitle:focus,#edText:focus{border-color:var(--accent)}
+  #edText{width:100%;flex:1;min-height:52dvh;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px;font-size:15.5px;line-height:1.6;resize:vertical;outline:none}
+  .ed-hint{color:var(--muted);font-size:12.5px;margin-top:10px;line-height:1.5}
+
+  /* ---------- Prompter ---------- */
+  #prompter{position:fixed;inset:0;z-index:10;background:var(--pbg,#000);display:none;flex-direction:column}
+  #prompter.active{display:flex}
+  /* Software landscape: fills the screen sideways even when the phone's rotation lock is on */
+  #prompter.rotated{inset:auto;top:0;left:100vw;width:100dvh;height:100dvw;
+    transform:rotate(90deg);transform-origin:left top}
+  #promptScroll{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;touch-action:pan-y}
+  #promptScroll::-webkit-scrollbar{display:none}
+  #promptContent{
+    font-family:'Atkinson Hyperlegible','Archivo',sans-serif;font-weight:700;
+    font-size:var(--psize,44px);line-height:1.42;color:var(--pfg,#fff);
+    padding:0 4%;word-break:break-word; /* top/bottom padding set in JS from prompter height */
+  }
+  #prompter.mirrored #promptContent{transform:scaleX(-1)}
+  #promptContent p{margin:0 0 .8em}
+  #promptContent .missed{color:#FF5C5C}
+  /* Guide line + dimming */
+  .dim{position:absolute;left:0;right:0;pointer-events:none;z-index:2;display:none}
+  #prompter.guided .dim{display:block}
+  #dimTop{top:0;height:27%;background:linear-gradient(to bottom,var(--pbg,#000) 12%,transparent)}
+  #dimBot{top:47%;bottom:0;background:linear-gradient(to top,var(--pbg,#000) 20%,transparent 88%)}
+  #guide{position:absolute;top:35%;left:0;right:0;pointer-events:none;z-index:3;display:none;height:0}
+  #prompter.guided #guide{display:block}
+  #guide::before,#guide::after{content:"";position:absolute;top:-7px;border:7px solid transparent}
+  #guide::before{left:6px;border-left:11px solid var(--accent);border-right:0}
+  #guide::after{right:6px;border-right:11px solid var(--accent);border-left:0}
+
+  /* Status chip */
+  #statusChip{position:absolute;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+    z-index:5;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;letter-spacing:.09em;
+    text-transform:uppercase;color:#EDEEF0;background:rgba(12,13,15,.72);border:1px solid rgba(255,255,255,.14);
+    border-radius:999px;padding:6px 13px;backdrop-filter:blur(6px)}
+  #statusChip .led{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+  #statusChip.listening .led{background:var(--live);animation:pulse 1.3s ease-in-out infinite}
+  #statusChip.manual .led{background:var(--accent)}
+  #statusChip.paused .led{background:var(--muted)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion:reduce){#statusChip.listening .led{animation:none}}
+
+  /* Perfect-mode retake banner */
+  #retryBanner{position:absolute;top:calc(48px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
+    z-index:5;display:none;align-items:center;gap:12px;max-width:92%;
+    background:rgba(32,10,10,.88);border:1px solid var(--live);border-radius:12px;
+    padding:10px 12px 10px 15px;backdrop-filter:blur(6px)}
+  #retryBanner.on{display:flex}
+  #retryMsg{color:#FFDCDC;font-size:13.5px;line-height:1.45}
+  #retrySkip{flex:none;background:var(--panel-2);border:1px solid var(--line);color:#EDEEF0;
+    font-size:12.5px;font-weight:600;border-radius:9px;padding:8px 12px}
+
+  /* Countdown */
+  #countdown{position:absolute;inset:0;z-index:8;display:none;place-items:center;background:rgba(0,0,0,.55)}
+  #countdown.on{display:grid}
+  #countdown span{font-size:clamp(90px,28vw,180px);font-weight:700;color:#fff;
+    font-family:'Atkinson Hyperlegible',sans-serif;font-variant-numeric:tabular-nums}
+
+  /* Control overlay */
+  #hud{position:absolute;inset:0;z-index:6;display:flex;flex-direction:column;justify-content:space-between;
+    opacity:0;pointer-events:none;transition:opacity .18s ease}
+  #hud.shown{opacity:1;pointer-events:auto}
+  .hud-bar{display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(12,13,15,.82);backdrop-filter:blur(8px)}
+  .hud-bar.top{padding-top:max(12px,env(safe-area-inset-top))}
+  .hud-bar.bottom{flex-direction:column;gap:12px;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+  .hud-title{flex:1;font-weight:600;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#EDEEF0}
+  .hud-row{display:flex;align-items:center;justify-content:center;gap:22px;width:100%}
+  .hud-btn{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;font-size:21px;
+    background:var(--panel-2);border:1px solid var(--line);color:#EDEEF0}
+  .hud-btn.big{width:68px;height:68px;background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-size:26px}
+  .speed-row{display:none;align-items:center;gap:12px;width:100%;max-width:420px;color:#C7CBD2;font-size:13px}
+  .speed-row.on{display:flex}
+  .speed-row input{flex:1}
+  input[type=range]{accent-color:var(--accent);height:28px}
+
+  /* Settings sheet */
+  #sheet{position:absolute;left:0;right:0;bottom:0;z-index:7;background:var(--panel);border-radius:18px 18px 0 0;
+    border:1px solid var(--line);border-bottom:0;max-height:80%;overflow-y:auto;
+    transform:translateY(105%);transition:transform .22s ease;padding:8px 18px calc(22px + env(safe-area-inset-bottom))}
+  #sheet.open{transform:translateY(0)}
+  @media (prefers-reduced-motion:reduce){#sheet{transition:none}#hud{transition:none}}
+  .sheet-grab{width:42px;height:4px;border-radius:2px;background:var(--line);margin:6px auto 14px}
+  .set-group{margin-bottom:20px}
+  .set-label{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;
+    display:flex;justify-content:space-between;align-items:baseline}
+  .set-label .val{color:var(--ink);font-variant-numeric:tabular-nums;letter-spacing:0;text-transform:none;font-size:13px}
+  .swatches{display:flex;gap:10px;flex-wrap:wrap}
+  .swatch{width:40px;height:40px;border-radius:10px;border:2px solid var(--line);position:relative}
+  .swatch.sel{border-color:var(--accent)}
+  .swatch.custom{display:grid;place-items:center;font-size:16px;color:var(--muted);background:var(--panel-2)}
+  .swatch input{position:absolute;inset:0;opacity:0;width:100%;height:100%}
+  .toggles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--panel-2);
+    border:1px solid var(--line);border-radius:11px;padding:12px 13px;font-size:14px;font-weight:500}
+  .toggle .pill{width:40px;height:24px;border-radius:12px;background:var(--line);position:relative;flex:none;transition:background .15s}
+  .toggle .pill::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;
+    background:#DDE0E4;transition:transform .15s}
+  .toggle.on .pill{background:var(--accent)}
+  .toggle.on .pill::after{transform:translateX(16px)}
+  .mode-seg{display:flex;background:var(--panel-2);border:1px solid var(--line);border-radius:11px;overflow:hidden}
+  .mode-seg button{flex:1;padding:12px;font-size:14px;font-weight:600;color:var(--muted)}
+  .mode-seg button.sel{background:var(--accent);color:var(--accent-ink)}
+  .sheet-note{color:var(--muted);font-size:12.5px;line-height:1.55;border-top:1px solid var(--line);padding-top:14px}
+
+  /* Toast */
+  #toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(20px);
+    z-index:60;background:var(--panel-2);border:1px solid var(--line);color:var(--ink);font-size:13.5px;line-height:1.45;
+    padding:11px 16px;border-radius:12px;max-width:88vw;opacity:0;transition:.2s ease;pointer-events:none;text-align:center}
+  #toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  :is(button,input,textarea,.swatch):focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style>
+
+<!-- ================= LIBRARY ================= -->
+<div class="screen active" id="library">
+  <div class="brand"><h1>VoiceCue</h1><span class="dot" aria-hidden="true"></span></div>
+  <p class="tagline">A teleprompter that listens. It follows your voice — pausing when you stumble, catching up when you rush.</p>
+  <div class="cap-badge" id="capBadge"><span class="led"></span><span id="capText">Checking microphone support…</span></div><button class="chip-btn" id="micCheck">🎙 Mic check</button>
+  <div class="lib-label">Scripts</div>
+  <div id="scriptList"></div>
+  <button class="new-btn" id="newBtn">＋ New script</button>
+  <p class="foot-note"><strong>iPhone tips:</strong> open this page in Safari directly (not inside another app) and allow the microphone when asked — use the Mic check button above to verify. For a true full screen without Safari's toolbar, tap Share → <strong>Add to Home Screen</strong> and launch it from the icon, or tap <strong>aA → Hide Toolbar</strong> in the address bar. Manual mode always works.</p>
+</div>
+
+<!-- ================= EDITOR ================= -->
+<div class="screen" id="editor">
+  <div class="ed-bar">
+    <button class="txt-btn ghost" id="edBack">‹ Back</button>
+    <div class="spacer"></div>
+    <button class="txt-btn danger" id="edDelete">Delete</button>
+    <button class="txt-btn primary" id="edSave">Save</button>
+  </div>
+  <input id="edTitle" placeholder="Script title" maxlength="80">
+  <textarea id="edText" placeholder="Paste or type your script here…"></textarea>
+  <p class="ed-hint">Blank lines become paragraph breaks on the prompter. Scripts are saved on this device only.</p>
+</div>
+
+<!-- ================= PROMPTER ================= -->
+<div id="prompter" class="guided">
+  <div id="promptScroll"><div id="promptContent"></div></div>
+  <div class="dim" id="dimTop"></div>
+  <div class="dim" id="dimBot"></div>
+  <div id="guide"></div>
+  <div id="statusChip" class="paused"><span class="led"></span><span id="statusText">Ready</span></div>
+  <div id="retryBanner"><span id="retryMsg"></span><button id="retrySkip">Skip ›</button></div>
+  <div id="countdown"><span id="countNum">3</span></div>
+
+  <div id="hud">
+    <div class="hud-bar top">
+      <button class="txt-btn ghost" id="prExit">✕ Close</button>
+      <div class="hud-title" id="prTitle"></div>
+      <button class="icon-btn" id="prFull" aria-label="Fullscreen">⛶</button>
+      <button class="icon-btn" id="prSettings" aria-label="Settings">⚙</button>
+    </div>
+    <div class="hud-bar bottom">
+      <div class="speed-row" id="speedRow">
+        <span>Speed</span>
+        <input type="range" id="speedSlider" min="10" max="220" step="5">
+        <span class="val" id="speedVal"></span>
+      </div>
+      <div class="hud-row">
+        <button class="hud-btn" id="prRestart" aria-label="Restart from top">⟲</button>
+        <button class="hud-btn big" id="prPlay" aria-label="Play / pause">▶</button>
+        <button class="hud-btn" id="prMode" aria-label="Toggle voice / manual mode">🎙</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sheet">
+    <div class="sheet-grab"></div>
+    <div class="set-group">
+      <div class="set-label"><span>Font size</span><span class="val" id="sizeVal"></span></div>
+      <input type="range" id="sizeSlider" min="20" max="110" step="2" style="width:100%">
+    </div>
+    <div class="set-group">
+      <div class="set-label"><span>Text color</span></div>
+      <div class="swatches" id="fgSwatches"></div>
+    </div>
+    <div class="set-group">
+      <div class="set-label"><span>Background</span></div>
+      <div class="swatches" id="bgSwatches"></div>
+    </div>
+    <div class="set-group">
+      <div class="set-label"><span>Mode</span></div>
+      <div class="mode-seg">
+        <button id="modeVoice">🎙 Voice-tracked</button>
+        <button id="modeManual">🖐 Manual speed</button>
+      </div>
+    </div>
+    <div class="set-group">
+      <div class="set-label"><span>Orientation</span></div>
+      <div class="mode-seg">
+        <button id="orAuto">Auto rotate</button>
+        <button id="orLand">Landscape lock</button>
+      </div>
+    </div>
+    <div class="set-group toggles">
+      <button class="toggle" id="tglMirror">Mirror<span class="pill"></span></button>
+      <button class="toggle" id="tglGuide">Guide line<span class="pill"></span></button>
+      <button class="toggle" id="tglCount">Countdown<span class="pill"></span></button>
+      <button class="toggle" id="tglPerfect">Perfect takes<span class="pill"></span></button>
+    </div>
+    <p class="sheet-note">In voice mode, scrolling starts when you start reading and pauses whenever you stop or go off-script. Drag the script to any point and start reading from there — tracking re-anchors to the line at the arrow. Perfect takes grades each sentence — stumbles, filler words, or mid-sentence pauses send you back to retake the line until it's clean (deliberate pauses at commas and sentence ends are always fine). Pinch with two fingers to resize the text.</p>
+  </div>
+</div>
+
+<div id="toast" role="status"></div>
+
+<script>
+(function(){
+"use strict";
+var $ = function(id){ return document.getElementById(id); };
+
+/* ---------------- State & storage ---------------- */
+var LS_SCRIPTS = "voicecue.scripts", LS_SETTINGS = "voicecue.settings";
+var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false };
+var settings = loadJSON(LS_SETTINGS, defaults);
+for (var k in defaults) if (!(k in settings)) settings[k] = defaults[k];
+var scripts = loadJSON(LS_SCRIPTS, null);
+if (!scripts) {
+  scripts = [{
+    id: String(Math.random()).slice(2), title: "Welcome to VoiceCue",
+    updated: Date.now(),
+    text: "Welcome to VoiceCue, the teleprompter that listens while you read.\n\nStart reading these words out loud, and the screen will begin to scroll on its own. There is no speed to set, because the speed is you. Read quickly, and the text will keep pace. Slow down for emphasis, and it slows down with you.\n\nNow try something. Stop talking for a moment.\n\nSee that? The prompter waited. It will do the same thing if you stumble over a word or go off script, and it picks right back up when you find your place again.\n\nTap the screen once to reveal the controls. From there you can change the font size, pick new colors, flip the text into mirror mode for a beam splitter rig, or switch to manual mode with a fixed scrolling speed.\n\nWhen you are ready, close this script and paste in your own. Happy recording."
+  }];
+  save(LS_SCRIPTS, scripts);
+}
+function loadJSON(key, fallback){ try{ var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
+function save(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
+function saveSettings(){ save(LS_SETTINGS, settings); }
+
+var SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+var micBlocked = false; // set true if permission is denied at runtime
+
+/* ---------------- Toast ---------------- */
+var toastTimer = null;
+function toast(msg, ms){
+  var t = $("toast"); t.textContent = msg; t.classList.add("on");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove("on"); }, ms || 3200);
+}
+
+/* ---------------- Screens ---------------- */
+function show(id){
+  ["library","editor"].forEach(function(s){ $(s).classList.toggle("active", s===id); });
+  $("prompter").classList.toggle("active", id==="prompter");
+}
+
+/* ---------------- Library ---------------- */
+function fmtDate(ts){
+  var d = new Date(ts);
+  return d.toLocaleDateString(undefined, {month:"short", day:"numeric"});
+}
+function wordCount(text){ return (text.trim().match(/\S+/g) || []).length; }
+function renderLibrary(){
+  var list = $("scriptList"); list.innerHTML = "";
+  scripts.sort(function(a,b){ return b.updated - a.updated; });
+  scripts.forEach(function(s){
+    var card = document.createElement("div"); card.className = "card";
+    var meta = document.createElement("div"); meta.className = "meta";
+    var t = document.createElement("div"); t.className = "title"; t.textContent = s.title || "Untitled";
+    var sub = document.createElement("div"); sub.className = "sub";
+    var wc = wordCount(s.text);
+    sub.textContent = wc + " words · ~" + Math.max(1, Math.round(wc/140)) + " min · " + fmtDate(s.updated);
+    meta.appendChild(t); meta.appendChild(sub);
+    var edit = document.createElement("button"); edit.className = "icon-btn"; edit.textContent = "✎";
+    edit.setAttribute("aria-label", "Edit " + (s.title||"script"));
+    edit.onclick = function(){ openEditor(s.id); };
+    var play = document.createElement("button"); play.className = "icon-btn play"; play.textContent = "▶";
+    play.setAttribute("aria-label", "Prompt " + (s.title||"script"));
+    play.onclick = function(){ startPrompter(s); };
+    card.appendChild(meta); card.appendChild(edit); card.appendChild(play);
+    list.appendChild(card);
+  });
+  var badge = $("capBadge");
+  if (SR && !micBlocked) { badge.classList.remove("no"); $("capText").textContent = "Voice tracking available"; }
+  else { badge.classList.add("no"); $("capText").textContent = SR ? "Microphone blocked — manual mode" : "No speech support — manual mode"; }
+}
+
+/* ---------------- Editor ---------------- */
+var editingId = null;
+function openEditor(id){
+  editingId = id;
+  var s = id ? scripts.filter(function(x){return x.id===id;})[0] : null;
+  $("edTitle").value = s ? s.title : "";
+  $("edText").value = s ? s.text : "";
+  $("edDelete").style.display = s ? "" : "none";
+  show("editor");
+}
+$("newBtn").onclick = function(){ openEditor(null); };
+$("micCheck").onclick = function(){
+  if (!SR){ toast("This browser has no speech recognition — use manual mode, or open the page in Chrome (Android) / Safari (iPhone).", 5000); return; }
+  var t;
+  try { t = new SR(); } catch(e){ toast("Mic check failed to start."); return; }
+  t.interimResults = true;
+  t.lang = navigator.language || "en-US";
+  var heard = "", failed = false, activeMic = "";
+  if (CAN_METER) navigator.mediaDevices.getUserMedia({audio:true}).then(function(st){
+    activeMic = (st.getAudioTracks()[0] || {}).label || "";
+    st.getTracks().forEach(function(tr){ tr.stop(); });
+  }).catch(function(){});
+  toast("Listening for 5 seconds — say something…", 5000);
+  t.onresult = function(ev){ heard = ev.results[ev.results.length-1][0].transcript; };
+  t.onerror = function(ev){
+    failed = true;
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed")
+      toast("The microphone is blocked here. Open this page directly in Safari (not inside another app) and allow mic access when asked. If Safari never asks: iPhone Settings → Apps → Safari → Microphone → Allow.", 8000);
+    else if (ev.error !== "no-speech" && ev.error !== "aborted")
+      toast("Mic check failed: " + ev.error, 5000);
+  };
+  t.onend = function(){
+    if (failed) return;
+    if (heard) toast("Heard: “" + heard.trim() + "” — voice tracking works here ✓", 5500);
+    else toast("The mic is allowed but nothing was heard." + (activeMic
+      ? " The active mic is “" + activeMic + "” — if that's not the one you're speaking into, switch it via the mic icon in Chrome's address bar."
+      : " Try again and speak up."), 8000);
+  };
+  try { t.start(); setTimeout(function(){ try{ t.stop(); }catch(e){} }, 5000); }
+  catch(e){ toast("Mic check failed to start."); }
+};
+$("edBack").onclick = function(){ show("library"); };
+$("edSave").onclick = function(){
+  var text = $("edText").value;
+  if (!text.trim()) { toast("Script is empty — nothing to save."); return; }
+  var title = $("edTitle").value.trim() || text.trim().split(/\s+/).slice(0,5).join(" ");
+  if (editingId) {
+    scripts.forEach(function(s){ if (s.id===editingId){ s.title=title; s.text=text; s.updated=Date.now(); } });
+  } else {
+    scripts.push({ id:String(Math.random()).slice(2), title:title, text:text, updated:Date.now() });
+  }
+  save(LS_SCRIPTS, scripts);
+  renderLibrary(); show("library"); toast("Saved.");
+};
+$("edDelete").onclick = function(){
+  if (!editingId) return;
+  if (!confirm("Delete this script? This can't be undone.")) return;
+  scripts = scripts.filter(function(s){ return s.id!==editingId; });
+  save(LS_SCRIPTS, scripts);
+  renderLibrary(); show("library"); toast("Deleted.");
+};
+
+/* ---------------- Word matching helpers ---------------- */
+function normWord(w){ return w.toLowerCase().replace(/[^a-z0-9']/g, ""); }
+function lev(a, b, max){
+  if (Math.abs(a.length-b.length) > max) return max+1;
+  var prev = [], cur = [], i, j;
+  for (j=0; j<=b.length; j++) prev[j] = j;
+  for (i=1; i<=a.length; i++){
+    cur[0] = i; var rowMin = i;
+    for (j=1; j<=b.length; j++){
+      var cost = a.charAt(i-1)===b.charAt(j-1) ? 0 : 1;
+      cur[j] = Math.min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost);
+      if (cur[j] < rowMin) rowMin = cur[j];
+    }
+    if (rowMin > max) return max+1;
+    var tmp = prev; prev = cur; cur = tmp;
+  }
+  return prev[b.length];
+}
+function simWords(a, b){
+  if (!a || !b) return 0;
+  if (a === b) return 1;
+  if (a.length >= 4 && b.length >= 4 && (a.indexOf(b)===0 || b.indexOf(a)===0)) return 0.9;
+  if (a.length >= 5 && b.length >= 5 && lev(a, b, 1) <= 1) return 0.8;
+  return 0;
+}
+
+/* ---------------- Prompter ---------------- */
+var current = null;         // active script
+var words = [];             // [{norm, el, sent, pauseOK, missed}]
+var pos = 0;                // index of last confirmed spoken word
+var sentStartArr = [0];     // sentence index → first word index
+var curSent = 0, sentFlags = {}, takes = {}, matchFloor = 0, seekTarget = null;
+var justReset = false, pauseFlagged = false, lastHeardTime = 0, cruiseV = 0;
+var running = false;        // prompter session active
+var playing = false;        // scroll engine engaged (voice: listening; manual: moving)
+var velocity = 0;           // px/s current
+var lastMatchTime = 0;
+var lastFrame = 0;
+var rafId = null;
+var userTouching = false, touchReleaseAt = 0;
+var rec = null, recShouldRun = false, recArmed = false, gotSpeech = false;
+var lastTranscript = "", lastDiagAt = 0, sessionBeganAt = 0, silentSince = 0;
+/* live mic level meter — desktop only (mobile recognition owns the mic exclusively) */
+var CAN_METER = !(/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) &&
+                !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+var meterStream = null, meterCtx = null, meterAnalyser = null, meterBuf = null, meterLabel = "";
+var chipLed = document.querySelector("#statusChip .led");
+function startMeter(){
+  if (!CAN_METER || meterStream) return;
+  navigator.mediaDevices.getUserMedia({audio:true}).then(function(st){
+    meterStream = st;
+    meterLabel = (st.getAudioTracks()[0] || {}).label || "the microphone";
+    meterCtx = new (window.AudioContext || window.webkitAudioContext)();
+    var src = meterCtx.createMediaStreamSource(st);
+    meterAnalyser = meterCtx.createAnalyser();
+    meterAnalyser.fftSize = 1024;
+    src.connect(meterAnalyser);
+    meterBuf = new Float32Array(meterAnalyser.fftSize);
+    silentSince = performance.now();
+  }).catch(function(){});
+}
+function stopMeter(){
+  if (meterStream){ meterStream.getTracks().forEach(function(t){ t.stop(); }); meterStream = null; }
+  if (meterCtx){ meterCtx.close().catch(function(){}); meterCtx = null; }
+  meterAnalyser = null;
+  if (chipLed) chipLed.style.transform = "";
+}
+function meterRead(){
+  if (!meterAnalyser) return -1;
+  meterAnalyser.getFloatTimeDomainData(meterBuf);
+  var s = 0;
+  for (var i = 0; i < meterBuf.length; i++) s += meterBuf[i] * meterBuf[i];
+  return Math.sqrt(s / meterBuf.length);
+}
+var wakeLock = null;
+
+var prompter = $("prompter"), scroller = $("promptScroll"), content = $("promptContent");
+
+function buildContent(text){
+  content.innerHTML = "";
+  words = []; sentStartArr = [0];
+  var sentIdx = 0, pendingBreak = false;
+  text.split(/\n\s*\n/).forEach(function(para){
+    var p = document.createElement("p");
+    var raws = para.split(/\s+/).filter(Boolean);
+    raws.forEach(function(raw, i){
+      var span = document.createElement("span");
+      span.textContent = raw + " ";
+      p.appendChild(span);
+      var n = normWord(raw);
+      if (!n) return;
+      if (pendingBreak){ sentIdx++; sentStartArr[sentIdx] = words.length; pendingBreak = false; }
+      var endS = /[.!?…]["'’”)\]]*$/.test(raw);
+      var pauseOK = endS || /[,;:—–]["'’”)\]]*$/.test(raw) || raw.slice(-1) === "-" || i === raws.length - 1;
+      words.push({ norm:n, el:span, sent:sentIdx, pauseOK:pauseOK, missed:false });
+      if (endS) pendingBreak = true;
+    });
+    pendingBreak = true; // a paragraph break always ends a sentence
+    if (p.childNodes.length) content.appendChild(p);
+  });
+}
+function sentEnd(sent){ return (sentStartArr[sent + 1] || words.length) - 1; }
+
+function applySettings(){
+  prompter.style.setProperty("--psize", settings.size + "px");
+  prompter.style.setProperty("--pfg", settings.fg);
+  prompter.style.setProperty("--pbg", settings.bg);
+  prompter.classList.toggle("mirrored", !!settings.mirror);
+  prompter.classList.toggle("guided", !!settings.guide);
+  $("sizeVal").textContent = settings.size + " px";
+  $("sizeSlider").value = settings.size;
+  $("speedSlider").value = settings.manualSpeed;
+  $("speedVal").textContent = settings.manualSpeed + " px/s";
+  $("tglMirror").classList.toggle("on", !!settings.mirror);
+  $("tglGuide").classList.toggle("on", !!settings.guide);
+  $("tglCount").classList.toggle("on", !!settings.countdown);
+  $("tglPerfect").classList.toggle("on", !!settings.perfect);
+  $("modeVoice").classList.toggle("sel", settings.mode==="voice");
+  $("modeManual").classList.toggle("sel", settings.mode==="manual");
+  $("orAuto").classList.toggle("sel", settings.orient!=="landscape");
+  $("orLand").classList.toggle("sel", settings.orient==="landscape");
+  updateOrientation();
+  $("prMode").textContent = settings.mode==="voice" ? "🎙" : "🖐";
+  $("speedRow").classList.toggle("on", settings.mode==="manual");
+  renderSwatches();
+}
+
+function guideY(){ return scroller.clientHeight * 0.35; }
+function updateOrientation(){
+  var wantRotate = settings.orient === "landscape" && window.innerWidth < window.innerHeight;
+  prompter.classList.toggle("rotated", wantRotate);
+  updatePromptPadding();
+}
+function updatePromptPadding(){
+  var h = scroller.clientHeight;
+  if (!h) return;
+  content.style.paddingTop = Math.round(h * 0.38) + "px";
+  content.style.paddingBottom = Math.round(h * 0.70) + "px";
+}
+function targetScrollFor(idx){
+  if (!words.length) return 0;
+  idx = Math.max(0, Math.min(idx, words.length-1));
+  var el = words[idx].el;
+  return el.offsetTop + el.offsetHeight/2 - guideY();
+}
+
+function setStatus(cls, txt){
+  var chip = $("statusChip");
+  chip.className = cls;
+  $("statusText").textContent = txt;
+}
+function refreshStatus(){
+  if (!running) return;
+  if (settings.mode === "manual") setStatus(playing ? "manual" : "paused", playing ? "Manual" : "Paused");
+  else if (!playing) setStatus("paused", "Paused");
+  else setStatus("listening", settings.perfect ? "Listening · Perfect" : "Listening");
+  $("prPlay").textContent = playing ? "❚❚" : "▶";
+}
+
+/* ----- scroll engine ----- */
+function frame(ts){
+  if (!running) return;
+  rafId = requestAnimationFrame(frame);
+  if (!lastFrame) { lastFrame = ts; return; }
+  var dt = Math.min(0.05, (ts - lastFrame)/1000);
+  lastFrame = ts;
+  if (userTouching || ts < touchReleaseAt) { velocity = 0; return; }
+
+  if (seekTarget != null) {                        // perfect-mode retake: glide back to the sentence start
+    var dS = seekTarget - scroller.scrollTop;
+    if (Math.abs(dS) < 2) { scroller.scrollTop = seekTarget; seekTarget = null; }
+    else scroller.scrollTop += dS * Math.min(1, dt * 7);
+    velocity = 0; return;
+  }
+
+  var vTarget = 0;
+  if (playing) {
+    if (settings.mode === "manual") {
+      vTarget = settings.manualSpeed;
+    } else {
+      var now2 = performance.now();
+      var err = targetScrollFor(pos) - scroller.scrollTop;
+      var matchFresh = lastMatchTime > 0 && (now2 - lastMatchTime) <= 1300;
+      var heardFresh = lastHeardTime > 0 && (now2 - lastHeardTime) <= 1500;
+      if (matchFresh) {
+        vTarget = Math.max(-50, Math.min(err * 1.6, settings.size * 9)); // behind → speed up, ahead → ease back
+        if (Math.abs(err) < 4) vTarget = 0;
+        if (vTarget > 0) cruiseV += (vTarget - cruiseV) * Math.min(1, dt * 1.5); // remember the reading pace
+      } else if (heardFresh) {
+        vTarget = cruiseV;                         // still talking but off-script → hold pace until we re-lock
+      } else {
+        vTarget = 0;                               // silence → hold
+      }
+      if (settings.perfect && !pauseFlagged && lastHeardTime > 0 && (now2 - lastHeardTime) > 1600
+          && pos > (sentStartArr[curSent] || 0) && pos < words.length - 1 && !words[pos].pauseOK) {
+        pauseFlagged = true; flag(curSent, "a pause mid-sentence");
+      }
+      /* --- self-diagnostics: catch silent mics and non-matching speech --- */
+      var lvl = meterRead();
+      if (lvl >= 0 && chipLed) {
+        if (lvl > 0.012) silentSince = now2;
+        chipLed.style.transform = "scale(" + (1 + Math.min(1.4, lvl * 28)).toFixed(2) + ")";
+        if (now2 - silentSince > 6000 && now2 - lastDiagAt > 12000) {
+          lastDiagAt = now2;
+          toast("🔇 “" + meterLabel + "” hears nothing. Switch Chrome's microphone (mic icon in the address bar, or the camera/mic icon by the URL) or disconnect Bluetooth earbuds, then try again.", 8000);
+        }
+      } else if (lvl < 0 && !lastHeardTime && sessionBeganAt && now2 - sessionBeganAt > 8000 && now2 - lastDiagAt > 15000) {
+        lastDiagAt = now2;
+        toast("Not hearing anything yet — make sure the right microphone is active and try speaking louder.", 5000);
+      }
+      if (lastHeardTime && (now2 - lastHeardTime) < 1500 && (now2 - lastMatchTime) > 5000 && now2 - lastDiagAt > 8000 && lastTranscript) {
+        lastDiagAt = now2;
+        toast("Hearing “…" + lastTranscript.trim().slice(-48) + "” — that doesn't match the script near the arrow. Scroll the script to where you're reading.", 6000);
+      }
+    }
+  }
+  velocity += (vTarget - velocity) * Math.min(1, dt * 5);
+  if (Math.abs(velocity) > 0.5) {
+    scroller.scrollTop += velocity * dt;
+    var maxScroll = scroller.scrollHeight - scroller.clientHeight;
+    if (settings.mode === "manual" && scroller.scrollTop >= maxScroll - 1) {
+      playing = false; velocity = 0; refreshStatus();
+    }
+  }
+}
+
+/* ----- speech recognition ----- */
+function startRecognition(){
+  if (!SR || rec) return;
+  recShouldRun = true;
+  var r = new SR();
+  rec = r;
+  r.continuous = true;
+  r.interimResults = true;
+  r.lang = navigator.language || "en-US";
+  r.__done = 0;
+  r.onresult = function(ev){
+    gotSpeech = true;
+    if (!recArmed) { r.__done = ev.results.length; return; } // primed during countdown: ignore
+    var txt = "";
+    for (var i=0; i<ev.results.length; i++) txt += ev.results[i][0].transcript + " ";
+    var spoken = txt.split(/\s+/).map(normWord).filter(Boolean);
+    if (spoken.length) { lastHeardTime = performance.now(); lastTranscript = txt; matchSpoken(spoken.slice(-8)); }
+    for (var j = r.__done; j < ev.results.length; j++){
+      if (!ev.results[j].isFinal) break;
+      r.__done = j + 1;
+      if (settings.perfect && settings.mode === "voice" && playing) gradeChunk(ev.results[j][0].transcript);
+    }
+  };
+  r.onerror = function(ev){
+    if (ev.error === "not-allowed" || ev.error === "service-not-allowed") {
+      recShouldRun = false;
+      if (!gotSpeech) {
+        micBlocked = true;
+        settings.mode = "manual"; saveSettings(); applySettings();
+        playing = false; refreshStatus();
+        toast("Microphone unavailable — switched to manual mode. On iPhone, open this page directly in Safari and allow the mic when asked (run the Mic check on the home screen to verify).", 6000);
+      } else {
+        playing = false; refreshStatus();
+        toast("The mic was interrupted — tap ▶ to resume.", 3800);
+      }
+    } else if (ev.error === "audio-capture") {
+      toast("No working microphone was found on this device.", 4200);
+    }
+  };
+  r.onend = function(){
+    rec = null;
+    if (recShouldRun && running && settings.mode === "voice") {
+      setTimeout(function(){ if (recShouldRun && running && !rec) startRecognition(); }, 300);
+    }
+  };
+  try { r.start(); } catch(e) { rec = null; }
+}
+function stopRecognition(){
+  recShouldRun = false;
+  if (rec) { try { rec.stop(); } catch(e){} rec = null; }
+}
+
+function matchSpoken(tail){
+  if (!words.length) return;
+  var now = performance.now();
+  // widen the search window the longer we've been off-script, so we can re-lock after a skip
+  var reach = 45 + (lastMatchTime ? Math.min(220, Math.floor((now - lastMatchTime)/1000) * 30) : 0);
+  var lo = Math.max(matchFloor, pos - 8), hi = Math.min(words.length - 1, pos + reach);
+  var best = -1, bestScore = 0;
+  for (var e = lo; e <= hi; e++){
+    var score = 0;
+    for (var k = 0; k < tail.length; k++){
+      var idx = e - (tail.length - 1) + k;
+      if (idx < 0 || idx >= words.length) continue;
+      var s = simWords(tail[k], words[idx].norm);
+      score += s > 0 ? s : -0.35;
+    }
+    score -= Math.abs(e - pos) * 0.02;
+    if (score > bestScore) { bestScore = score; best = e; }
+  }
+  var threshold = Math.max(1.6, tail.length * 0.45);
+  if (best >= 0 && bestScore >= threshold) {
+    var prev = pos;
+    pos = best;
+    lastMatchTime = now;
+    pauseFlagged = false;
+    markMissed(prev, best, tail);
+    if (settings.perfect && settings.mode === "voice") onAdvance(prev, best);
+    else justReset = false;
+  }
+}
+
+/* words jumped over or said differently get highlighted, not halted on */
+function markMissed(prev, best, tail){
+  if (justReset || best <= prev + 1) return;
+  var hit = {};
+  for (var k = 0; k < tail.length; k++){
+    var idx = best - (tail.length - 1) + k;
+    if (idx >= 0 && idx < words.length && simWords(tail[k], words[idx].norm) > 0) hit[idx] = 1;
+  }
+  var count = 0, firstSent = -1;
+  for (var i = prev + 1; i <= best; i++){
+    if (!hit[i] && !words[i].missed){
+      words[i].missed = true; words[i].el.classList.add("missed");
+      count++; if (firstSent < 0) firstSent = words[i].sent;
+    }
+  }
+  if (count >= 2 && firstSent >= 0) flag(firstSent, "skipped or changed words");
+}
+
+/* ----- perfect-takes grading ----- */
+var FILLERS = {um:1, uh:1, uhh:1, umm:1, er:1, erm:1, ah:1, hmm:1, mm:1};
+function flag(sent, reason){
+  if (settings.perfect && settings.mode === "voice" && sentFlags[sent] === undefined) sentFlags[sent] = reason;
+}
+function isScriptWordNear(w){
+  var a = Math.max(0, pos - 4), b = Math.min(words.length - 1, pos + 8);
+  for (var i = a; i <= b; i++) if (words[i].norm === w) return true;
+  return false;
+}
+function gradeChunk(transcript){
+  var t = transcript.split(/\s+/).map(normWord).filter(Boolean);
+  for (var q = 0; q < t.length; q++){
+    if (FILLERS[t[q]] && !isScriptWordNear(t[q])) flag(curSent, "a filler word (“" + t[q] + "”)");
+    if (q >= 2 && t[q] === t[q-1] && t[q-1] === t[q-2]) flag(curSent, "repeated words");
+    if (q >= 3 && t[q] === t[q-2] && t[q-1] === t[q-3] && t[q] !== t[q-1]) flag(curSent, "a repeated phrase");
+  }
+}
+function onAdvance(prevPos, newPos){
+  if (justReset){ justReset = false; }
+  else if (newPos < prevPos - 2) flag(curSent, "a restarted line");
+  var s = words[newPos].sent;
+  if (s > curSent){
+    if (!evaluateSentence(curSent)) return;
+    curSent = s; matchFloor = 0;
+  }
+  if (newPos === words.length - 1){
+    setTimeout(function(){ if (running && pos === words.length - 1) evaluateSentence(curSent); }, 700);
+  }
+}
+function evaluateSentence(sent){
+  var reason = sentFlags[sent];
+  if (reason){ startRetry(sent, reason); return false; }
+  if ((takes[sent] || 1) > 1) toast("Clean take ✓", 1500);
+  hideBanner();
+  return true;
+}
+function startRetry(sent, reason){
+  takes[sent] = (takes[sent] || 1) + 1;
+  delete sentFlags[sent];
+  curSent = sent;
+  for (var i = sentStartArr[sent]; i <= sentEnd(sent); i++){
+    if (words[i].missed){ words[i].missed = false; words[i].el.classList.remove("missed"); }
+  }
+  pos = sentStartArr[sent];
+  matchFloor = pos;
+  justReset = true; pauseFlagged = false;
+  lastMatchTime = 0; lastHeardTime = 0; cruiseV = 0;
+  seekTarget = Math.max(0, targetScrollFor(pos));
+  $("retryMsg").textContent = "Take " + takes[sent] + " — " + reason + ". Go again from the arrow.";
+  $("retryBanner").classList.add("on");
+}
+function hideBanner(){ $("retryBanner").classList.remove("on"); }
+function resetPerfect(){
+  curSent = 0; sentFlags = {}; takes = {}; matchFloor = 0; seekTarget = null;
+  justReset = false; pauseFlagged = false; cruiseV = 0; lastHeardTime = 0;
+  hideBanner();
+  for (var i = 0; i < words.length; i++){
+    if (words[i].missed){ words[i].missed = false; words[i].el.classList.remove("missed"); }
+  }
+}
+
+/* ----- wake lock ----- */
+function acquireWake(){
+  if (!("wakeLock" in navigator)) return;
+  navigator.wakeLock.request("screen").then(function(wl){ wakeLock = wl; }).catch(function(){});
+}
+function releaseWake(){ if (wakeLock) { wakeLock.release().catch(function(){}); wakeLock = null; } }
+document.addEventListener("visibilitychange", function(){
+  if (document.visibilityState === "visible" && running) acquireWake();
+});
+
+/* ----- session control ----- */
+function startPrompter(s){
+  current = s;
+  if (settings.mode === "voice" && (!SR || micBlocked)) {
+    settings.mode = "manual"; saveSettings();
+    toast(SR ? "Microphone blocked — using manual mode." : "This browser has no speech recognition — using manual mode.", 4200);
+  }
+  buildContent(s.text);
+  $("prTitle").textContent = s.title || "Untitled";
+  show("prompter");
+  applySettings();
+  resetPerfect();
+  scroller.scrollTop = 0;
+  pos = 0; velocity = 0; lastFrame = 0; playing = false; lastHeardTime = 0;
+  running = true;
+  hideHud();
+  acquireWake();
+  cancelAnimationFrame(rafId);
+  rafId = requestAnimationFrame(frame);
+  // iOS requires the mic to start inside the user's tap — prime it now, arm it when the countdown ends
+  recArmed = false; gotSpeech = false;
+  if (settings.mode === "voice") startRecognition();
+  if (settings.countdown) runCountdown(begin); else begin();
+}
+function begin(){
+  if (!running) return;
+  playing = true;
+  lastMatchTime = 0; lastHeardTime = 0; lastTranscript = "";
+  sessionBeganAt = performance.now(); silentSince = sessionBeganAt; lastDiagAt = 0;
+  recArmed = true;
+  if (settings.mode === "voice") { startRecognition(); startMeter(); } // recognition is a no-op if already primed from the tap
+  refreshStatus();
+  if (settings.mode === "voice") toast("Start reading — the prompter follows your voice.", 2600);
+}
+function exitPrompter(){
+  running = false; playing = false; recArmed = false;
+  stopRecognition(); stopMeter();
+  cancelAnimationFrame(rafId);
+  releaseWake();
+  $("countdown").classList.remove("on");
+  $("sheet").classList.remove("open");
+  show("library");
+  renderLibrary();
+}
+function runCountdown(done){
+  var el = $("countdown"), num = $("countNum"), n = 3;
+  el.classList.add("on"); num.textContent = n;
+  setStatus("paused", "Get ready");
+  var iv = setInterval(function(){
+    n--;
+    if (!running) { clearInterval(iv); el.classList.remove("on"); return; }
+    if (n <= 0) { clearInterval(iv); el.classList.remove("on"); done(); }
+    else num.textContent = n;
+  }, 900);
+}
+
+/* ----- HUD ----- */
+var hud = $("hud");
+function hideHud(){ hud.classList.remove("shown"); }
+prompter.addEventListener("click", function(ev){
+  if (hud.contains(ev.target) && hud.classList.contains("shown")) return;
+  if ($("sheet").contains(ev.target)) return;
+  if ($("sheet").classList.contains("open")) { $("sheet").classList.remove("open"); return; }
+  hud.classList.toggle("shown");
+});
+/* touch: one finger drags to reposition; two fingers pinch to resize text.
+   After any user scroll (drag, momentum, or mouse wheel) settles, voice tracking
+   re-anchors to whatever line sits at the guide — so you can start from anywhere. */
+var userScrollUntil = 0, scrollSettleTimer = null;
+function noteUserScroll(ms){
+  var until = performance.now() + ms;
+  if (until > userScrollUntil) userScrollUntil = until;
+  if (until > touchReleaseAt) touchReleaseAt = until;
+}
+function repositionFromScroll(){
+  if (!running || settings.mode !== "voice" || userTouching) return;
+  var np = nearestWordToGuide();
+  if (np === pos) return;
+  pos = np;
+  lastMatchTime = 0; lastHeardTime = 0; velocity = 0; matchFloor = 0;
+  justReset = true;
+  if (settings.perfect){
+    curSent = words[pos] ? words[pos].sent : 0;
+    sentFlags = {}; seekTarget = null; hideBanner();
+  }
+}
+scroller.addEventListener("wheel", function(){ noteUserScroll(800); }, {passive:true});
+scroller.addEventListener("scroll", function(){
+  if (userTouching || performance.now() < userScrollUntil){
+    clearTimeout(scrollSettleTimer);
+    scrollSettleTimer = setTimeout(repositionFromScroll, 350);
+  }
+}, {passive:true});
+var pinchStartDist = 0, pinchStartSize = 0;
+function touchDist(t){ var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY; return Math.hypot(dx, dy); }
+scroller.addEventListener("touchstart", function(e){
+  userTouching = true;
+  if (e.touches.length === 2) { pinchStartDist = touchDist(e.touches); pinchStartSize = settings.size; }
+}, {passive:true});
+scroller.addEventListener("touchmove", function(e){
+  if (e.touches.length === 2 && pinchStartDist) {
+    e.preventDefault();
+    var next = Math.round(pinchStartSize * touchDist(e.touches) / pinchStartDist / 2) * 2;
+    next = Math.max(20, Math.min(110, next));
+    if (next !== settings.size) {
+      settings.size = next;
+      prompter.style.setProperty("--psize", next + "px");
+      $("sizeVal").textContent = next + " px";
+      $("sizeSlider").value = next;
+      toast(next + " px", 800);
+    }
+  }
+}, {passive:false});
+scroller.addEventListener("touchend", function(e){
+  if (e.touches.length < 2 && pinchStartDist) { pinchStartDist = 0; saveSettings(); }
+  if (e.touches.length === 0) { userTouching = false; noteUserScroll(1000); }
+}, {passive:true});
+
+$("prExit").onclick = function(ev){ ev.stopPropagation(); exitPrompter(); };
+$("prSettings").onclick = function(ev){ ev.stopPropagation(); $("sheet").classList.add("open"); };
+$("prFull").onclick = function(ev){
+  ev.stopPropagation();
+  var d = document;
+  if (d.fullscreenElement || d.webkitFullscreenElement){
+    (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+    return;
+  }
+  var el = d.documentElement;
+  var fn = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (fn){
+    try {
+      var p = fn.call(el);
+      if (p && p.catch) p.catch(fullscreenTip);
+    } catch(e){ fullscreenTip(); }
+  } else fullscreenTip();
+};
+function fullscreenTip(){
+  toast("This browser won't let a web page go fullscreen. On iPhone: tap aA in the address bar → Hide Toolbar, or Share → Add to Home Screen and launch VoiceCue from the icon for a true fullscreen app.", 7000);
+}
+$("prPlay").onclick = function(ev){
+  ev.stopPropagation();
+  playing = !playing;
+  if (settings.mode === "voice") { if (playing) startRecognition(); else stopRecognition(); }
+  refreshStatus();
+};
+$("prRestart").onclick = function(ev){
+  ev.stopPropagation();
+  resetPerfect();
+  scroller.scrollTop = 0; pos = 0; velocity = 0; playing = false;
+  recArmed = false; // keep the mic session alive (iOS), just ignore it during the countdown
+  refreshStatus();
+  if (settings.countdown) runCountdown(begin); else begin();
+};
+$("prMode").onclick = function(ev){ ev.stopPropagation(); setMode(settings.mode === "voice" ? "manual" : "voice"); };
+$("retrySkip").onclick = function(ev){
+  ev.stopPropagation();
+  hideBanner();
+  delete sentFlags[curSent];
+  if (curSent + 1 < sentStartArr.length){
+    curSent = curSent + 1;
+    pos = sentStartArr[curSent];
+    matchFloor = pos;
+  } else {
+    pos = words.length - 1;
+  }
+  justReset = true; lastMatchTime = 0; lastHeardTime = 0;
+  seekTarget = Math.max(0, targetScrollFor(pos));
+};
+
+function setMode(mode){
+  if (mode === "voice" && (!SR || micBlocked)) {
+    toast(SR ? "Microphone is blocked in this viewer — open the page in Safari or Chrome for voice tracking." : "Speech recognition isn't supported in this browser.", 4600);
+    return;
+  }
+  settings.mode = mode; saveSettings(); applySettings();
+  if (running) {
+    hideBanner(); seekTarget = null;
+    if (mode === "voice") { pos = nearestWordToGuide(); if (playing){ startRecognition(); startMeter(); } }
+    else { stopRecognition(); stopMeter(); }
+    refreshStatus();
+  }
+}
+function nearestWordToGuide(){
+  var y = scroller.scrollTop + guideY(), best = 0, bestD = Infinity;
+  for (var i = 0; i < words.length; i++){
+    var d = Math.abs(words[i].el.offsetTop - y);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  return best;
+}
+
+/* ----- settings sheet controls ----- */
+$("sizeSlider").oninput = function(){ settings.size = +this.value; saveSettings(); applySettings(); };
+$("speedSlider").oninput = function(){ settings.manualSpeed = +this.value; saveSettings(); $("speedVal").textContent = settings.manualSpeed + " px/s"; };
+$("modeVoice").onclick = function(){ setMode("voice"); };
+$("modeManual").onclick = function(){ setMode("manual"); };
+$("orAuto").onclick = function(){ settings.orient = "auto"; saveSettings(); applySettings(); };
+$("orLand").onclick = function(){ settings.orient = "landscape"; saveSettings(); applySettings(); };
+[["tglMirror","mirror"],["tglGuide","guide"],["tglCount","countdown"],["tglPerfect","perfect"]].forEach(function(pair){
+  $(pair[0]).onclick = function(){ settings[pair[1]] = !settings[pair[1]]; saveSettings(); applySettings(); };
+});
+
+var FG_PRESETS = ["#FFFFFF","#FFE95C","#7FE3FF","#8CF2A9","#111111"];
+var BG_PRESETS = ["#000000","#15171B","#0B2239","#243310","#FFFFFF"];
+function renderSwatches(){
+  buildSwatchRow($("fgSwatches"), FG_PRESETS, settings.fg, function(v){ settings.fg = v; });
+  buildSwatchRow($("bgSwatches"), BG_PRESETS, settings.bg, function(v){ settings.bg = v; });
+}
+function buildSwatchRow(container, presets, currentVal, apply){
+  container.innerHTML = "";
+  var matched = false;
+  presets.forEach(function(hex){
+    var b = document.createElement("button");
+    b.className = "swatch" + (hex.toUpperCase() === currentVal.toUpperCase() ? " sel" : "");
+    if (hex.toUpperCase() === currentVal.toUpperCase()) matched = true;
+    b.style.background = hex;
+    b.setAttribute("aria-label", hex);
+    b.onclick = function(){ apply(hex); saveSettings(); applySettings(); };
+    container.appendChild(b);
+  });
+  var custom = document.createElement("label");
+  custom.className = "swatch custom" + (matched ? "" : " sel");
+  custom.textContent = "◑";
+  if (!matched) custom.style.background = currentVal;
+  var inp = document.createElement("input");
+  inp.type = "color"; inp.value = currentVal;
+  inp.oninput = function(){ apply(inp.value); saveSettings(); applySettings(); };
+  custom.appendChild(inp);
+  container.appendChild(custom);
+}
+
+/* ---------------- boot ---------------- */
+window.addEventListener("resize", function(){ if (running) updateOrientation(); });
+applySettings();
+renderLibrary();
+
+/* test/debug hook: simulate recognized speech without a microphone */
+window.__vc = {
+  feed: function(t){ lastHeardTime = performance.now(); matchSpoken(t.split(/\s+/).map(normWord).filter(Boolean).slice(-8)); },
+  grade: gradeChunk,
+  set: function(k, v){ settings[k] = v; applySettings(); },
+  state: function(){
+    return { pos: pos, curSent: curSent, flags: JSON.parse(JSON.stringify(sentFlags)),
+      takes: JSON.parse(JSON.stringify(takes)), seek: seekTarget,
+      banner: $("retryBanner").classList.contains("on"),
+      bannerText: $("retryMsg").textContent,
+      missed: words.map(function(w,i){ return w.missed ? i : -1; }).filter(function(x){ return x >= 0; }) };
+  }
+};
+})();
+</script>
