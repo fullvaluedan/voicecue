@@ -118,7 +118,7 @@ final class SpeechBridge: NSObject {
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playAndRecord, mode: .measurement,
-                                    options: [.duckOthers, .defaultToSpeaker, .allowBluetooth])
+                                    options: [.duckOthers, .defaultToSpeaker, .allowBluetoothHFP])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
             fail("audio-capture")
