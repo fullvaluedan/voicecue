@@ -27,8 +27,10 @@ final class SpeechBridge: NSObject {
 
     /// Words kept "live" at the end of the transcript, where the recognizer still revises.
     private let unsettledTail = 5
-    /// Restarts that produced no transcript before giving up on the recognizer entirely.
+    /// Consecutive instant, wordless task deaths before giving up on the recognizer.
     private let failureBudget = 3
+    /// A task that dies this fast without a word died of a fault, not of silence.
+    private let faultWindow: TimeInterval = 1.0
 
     private let engine = AVAudioEngine()
     private var recognizer: SFSpeechRecognizer?
@@ -40,8 +42,9 @@ final class SpeechBridge: NSObject {
     private var emittedWords = 0
     /// The unsettled tail last shown to the page, kept so a rotation can finalize it.
     private var pendingTail: String?
-    /// Consecutive recognition tasks that ended without producing a word.
+    /// Consecutive recognition tasks that died instantly without producing a word.
     private var barrenTasks = 0
+    private var taskStartedAt = Date.distantPast
 
     /// Shared with the audio render thread; every access goes through `requestLock`.
     private var lockedRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -163,6 +166,7 @@ final class SpeechBridge: NSObject {
 
         emittedWords = 0
         pendingTail = nil
+        taskStartedAt = Date()
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, error in
             DispatchQueue.main.async {
@@ -175,7 +179,12 @@ final class SpeechBridge: NSObject {
                 // server-based recognition imposes. Keep the mic open and start another one so
                 // the page never sees a gap, unless nothing is coming through at all, which
                 // means the recognizer itself is unusable.
-                if self.emittedWords == 0 && (self.pendingTail?.isEmpty ?? true) {
+                // Distinguish a broken recognizer from a quiet room: a fault fails
+                // immediately, while silence takes seconds to time out. Tearing the mic down
+                // over a pause would leave the presenter deaf for a second or two.
+                let heardNothing = self.emittedWords == 0 && (self.pendingTail?.isEmpty ?? true)
+                let diedInstantly = Date().timeIntervalSince(self.taskStartedAt) < self.faultWindow
+                if heardNothing && diedInstantly {
                     self.barrenTasks += 1
                     if self.barrenTasks >= self.failureBudget {
                         self.fail(error == nil ? "aborted" : "network")
@@ -257,6 +266,7 @@ final class SpeechBridge: NSObject {
         endCurrentRequest()
         emittedWords = 0
         barrenTasks = 0
+        taskStartedAt = .distantPast
         if engine.isRunning { engine.stop() }
         if tapInstalled {
             engine.inputNode.removeTap(onBus: 0)
