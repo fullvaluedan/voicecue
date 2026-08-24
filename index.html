@@ -375,11 +375,60 @@ function copyLink(url, doneMsg){
       function(){ window.prompt("Copy this link:", url); });
   } else window.prompt("Copy this link:", url);
 }
+function randCode(n){
+  var alphabet = "abcdefghjkmnpqrstuvwxyz23456789", out = "";
+  var rnd = new Uint8Array(n); crypto.getRandomValues(rnd);
+  for (var i = 0; i < n; i++) out += alphabet[rnd[i] % alphabet.length];
+  return out;
+}
 function shareScript(s){
   compressText(JSON.stringify({t: s.title, x: s.text})).then(function(enc){
-    copyLink(CANONICAL_URL + "#s=" + enc,
-      "Link copied — opening it loads “" + (s.title || "this script") + "” into VoiceCue on any device. It never expires.");
+    if (enc.length <= 1500){
+      // small script: embed it in the link itself — never expires
+      copyLink(CANONICAL_URL + "#s=" + enc,
+        "Link copied — opening it loads “" + (s.title || "this script") + "” on any device. It never expires.");
+      return;
+    }
+    // big script: park it on the relay under a short code for 24 hours
+    var code = randCode(10);
+    copyLink(CANONICAL_URL + "#p=" + code,
+      "Short link copied — “" + (s.title || "this script") + "” can be opened from it for 24 hours.");
+    publishPaste(code, enc).catch(function(){
+      toast("Couldn't publish the short link — check the connection and tap 🔗 again.", 6000);
+    });
   }).catch(function(){ toast("Couldn't create the link."); });
+}
+function pasteClient(){
+  return loadMqtt().then(function(){
+    return window.mqtt.connect(MIRROR_BROKER, { protocolVersion: 5, connectTimeout: 8000, reconnectPeriod: 0 });
+  });
+}
+function publishPaste(code, data){
+  return pasteClient().then(function(c){
+    return new Promise(function(res, rej){
+      var done = false;
+      function finish(err){ if (done) return; done = true; clearTimeout(to); try { c.end(true); } catch(e){} err ? rej(err) : res(); }
+      var to = setTimeout(function(){ finish(new Error("timeout")); }, 10000);
+      c.on("connect", function(){
+        c.publish("voicecue/p/" + code, data,
+          { retain: true, qos: 1, properties: { messageExpiryInterval: 86400 } },
+          function(err){ finish(err); });
+      });
+      c.on("error", function(e){ finish(e); });
+    });
+  });
+}
+function fetchPaste(code){
+  return pasteClient().then(function(c){
+    return new Promise(function(res, rej){
+      var done = false;
+      function finish(err, val){ if (done) return; done = true; clearTimeout(to); try { c.end(true); } catch(e){} err ? rej(err) : res(val); }
+      var to = setTimeout(function(){ finish(new Error("timeout")); }, 12000);
+      c.on("connect", function(){ c.subscribe("voicecue/p/" + code); });
+      c.on("message", function(t, payload){ finish(null, payload.toString()); });
+      c.on("error", function(e){ finish(e); });
+    });
+  });
 }
 function save(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
 function saveSettings(){ save(LS_SETTINGS, settings); }
@@ -1343,19 +1392,26 @@ $("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
 
 /* boot: import a script or join a mirror room from the URL fragment */
 (function(){
+  function importShared(json){
+    var p = JSON.parse(json);
+    if (!p || !p.x) throw new Error("bad");
+    var dupe = scripts.some(function(s){ return s.text === p.x; });
+    if (!dupe){
+      scripts.push({id: String(Math.random()).slice(2), title: p.t || "Shared script", text: p.x, updated: Date.now()});
+      save(LS_SCRIPTS, scripts); renderLibrary();
+    }
+    toast(dupe ? "You already have this script." : "“" + (p.t || "Shared script") + "” added from the link — tap ▶ to prompt.", 5500);
+  }
   var h = location.hash || "";
   if (h.indexOf("#s=") === 0){
-    decompressText(h.slice(3)).then(function(json){
-      var p = JSON.parse(json);
-      if (!p || !p.x) throw new Error("bad");
-      var dupe = scripts.some(function(s){ return s.text === p.x; });
-      if (!dupe){
-        scripts.push({id: String(Math.random()).slice(2), title: p.t || "Shared script", text: p.x, updated: Date.now()});
-        save(LS_SCRIPTS, scripts); renderLibrary();
-      }
-      history.replaceState(null, "", location.pathname);
-      toast(dupe ? "You already have this script." : "“" + (p.t || "Shared script") + "” added from the link — tap ▶ to prompt.", 5500);
-    }).catch(function(){ toast("That share link couldn't be read.", 4500); });
+    history.replaceState(null, "", location.pathname);
+    decompressText(h.slice(3)).then(importShared)
+      .catch(function(){ toast("That share link couldn't be read.", 4500); });
+  } else if (h.indexOf("#p=") === 0){
+    history.replaceState(null, "", location.pathname);
+    toast("Fetching the shared script…", 3000);
+    fetchPaste(h.slice(3)).then(decompressText).then(importShared)
+      .catch(function(){ toast("This share link has expired or can't be reached — ask the sender for a fresh one.", 6500); });
   } else if (h.indexOf("#m=") === 0){
     var code = h.slice(3).trim().toUpperCase();
     history.replaceState(null, "", location.pathname);
@@ -1369,6 +1425,7 @@ window.__vc = {
   grade: gradeChunk,
   set: function(k, v){ settings[k] = v; applySettings(); },
   mirrorStart: mirrorStart, mirrorJoin: mirrorJoin, mirrorEnd: mirrorEnd,
+  pastePub: publishPaste, pasteFetch: fetchPaste, compress: compressText, decompress: decompressText,
   state: function(){
     return { pos: pos, curSent: curSent, flags: JSON.parse(JSON.stringify(sentFlags)),
       takes: JSON.parse(JSON.stringify(takes)), seek: seekTarget,
