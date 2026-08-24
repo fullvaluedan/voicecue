@@ -42,6 +42,9 @@
   .cap-badge.no .led{background:var(--live)}
   .chip-btn{display:inline-flex;align-items:center;gap:6px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;
     border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:6px 12px;margin:0 0 22px 8px}
+  .mirror-bar{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--accent);
+    border-radius:12px;padding:11px 14px;margin-bottom:18px;font-size:13px;line-height:1.45;color:var(--ink)}
+  .mirror-bar button{margin-left:auto;color:var(--live);font-weight:600;font-size:13px;flex:none}
   .lib-label{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:8px 0 10px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px;
     display:flex;align-items:center;gap:12px}
@@ -186,7 +189,8 @@
 <div class="screen active" id="library">
   <div class="brand"><h1>VoiceCue</h1><span class="dot" aria-hidden="true"></span></div>
   <p class="tagline">A teleprompter that listens. It follows your voice — pausing when you stumble, catching up when you rush.</p>
-  <div class="cap-badge" id="capBadge"><span class="led"></span><span id="capText">Checking microphone support…</span></div><button class="chip-btn" id="micCheck">🎙 Mic check</button>
+  <div class="cap-badge" id="capBadge"><span class="led"></span><span id="capText">Checking microphone support…</span></div><button class="chip-btn" id="micCheck">🎙 Mic check</button><button class="chip-btn" id="mirrorBtn">📡 Mirror devices</button>
+  <div class="mirror-bar" id="mirrorBar" hidden><span id="mirrorText"></span><button id="mirrorEndBtn">End</button></div>
   <div class="lib-label">Scripts</div>
   <div id="scriptList"></div>
   <button class="new-btn" id="newBtn">＋ New script</button>
@@ -298,6 +302,51 @@ if (!scripts) {
   save(LS_SCRIPTS, scripts);
 }
 function loadJSON(key, fallback){ try{ var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }catch(e){ return fallback; } }
+/* Canonical public home of the app — generated links must work on any device */
+var CANONICAL_URL = "https://fullvaluedan.github.io/voicecue/";
+
+/* ----- share links: the script itself is compressed into the URL fragment ----- */
+function b64u(bytes){
+  var s = "";
+  for (var i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function unb64u(str){
+  str = str.replace(/-/g, "+").replace(/_/g, "/");
+  while (str.length % 4) str += "=";
+  var bin = atob(str), out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function compressText(str){
+  var data = new TextEncoder().encode(str);
+  if (window.CompressionStream){
+    return new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer()
+      .then(function(ab){ return "d" + b64u(new Uint8Array(ab)); });
+  }
+  return Promise.resolve("p" + b64u(data));
+}
+function decompressText(s){
+  var bytes = unb64u(s.slice(1));
+  if (s.charAt(0) === "d"){
+    if (!window.DecompressionStream) return Promise.reject(new Error("unsupported"));
+    return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer()
+      .then(function(ab){ return new TextDecoder().decode(ab); });
+  }
+  return Promise.resolve(new TextDecoder().decode(bytes));
+}
+function copyLink(url, doneMsg){
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(function(){ toast(doneMsg, 5000); },
+      function(){ window.prompt("Copy this link:", url); });
+  } else window.prompt("Copy this link:", url);
+}
+function shareScript(s){
+  compressText(JSON.stringify({t: s.title, x: s.text})).then(function(enc){
+    copyLink(CANONICAL_URL + "#s=" + enc,
+      "Link copied — opening it loads “" + (s.title || "this script") + "” into VoiceCue on any device. It never expires.");
+  }).catch(function(){ toast("Couldn't create the link."); });
+}
 function save(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
 function saveSettings(){ save(LS_SETTINGS, settings); }
 
@@ -371,13 +420,16 @@ function renderLibrary(){
     var wc = wordCount(s.text);
     sub.textContent = wc + " words · ~" + Math.max(1, Math.round(wc/140)) + " min · " + fmtDate(s.updated);
     meta.appendChild(t); meta.appendChild(sub);
+    var share = document.createElement("button"); share.className = "icon-btn"; share.textContent = "🔗";
+    share.setAttribute("aria-label", "Copy share link for " + (s.title||"script"));
+    share.onclick = function(){ shareScript(s); };
     var edit = document.createElement("button"); edit.className = "icon-btn"; edit.textContent = "✎";
     edit.setAttribute("aria-label", "Edit " + (s.title||"script"));
     edit.onclick = function(){ openEditor(s.id); };
     var play = document.createElement("button"); play.className = "icon-btn play"; play.textContent = "▶";
     play.setAttribute("aria-label", "Prompt " + (s.title||"script"));
     play.onclick = function(){ startPrompter(s); };
-    card.appendChild(meta); card.appendChild(edit); card.appendChild(play);
+    card.appendChild(meta); card.appendChild(share); card.appendChild(edit); card.appendChild(play);
     list.appendChild(card);
   });
   var badge = $("capBadge");
@@ -614,7 +666,16 @@ function frame(ts){
   if (!lastFrame) { lastFrame = ts; return; }
   var dt = Math.min(0.05, (ts - lastFrame)/1000);
   lastFrame = ts;
+  if (mirror.host && mirror.connected && ts - mirror.lastPub > 150) {   // broadcast our position, drags included
+    mirror.lastPub = ts;
+    mirrorPublishPos(nearestWordToGuide());
+  }
   if (userTouching || ts < touchReleaseAt) { velocity = 0; return; }
+  if (mirror.follower && mirror.remoteW != null) {                      // glide to wherever the host is
+    var mt = Math.max(0, targetScrollFor(mirror.remoteW));
+    scroller.scrollTop += (mt - scroller.scrollTop) * Math.min(1, dt * 5);
+    velocity = 0; return;
+  }
 
   if (seekTarget != null) {                        // perfect-mode retake: glide back to the sentence start
     var dS = seekTarget - scroller.scrollTop;
@@ -873,6 +934,8 @@ function startPrompter(s){
   }
   recArmed = false; gotSpeech = false;
   if (settings.mode === "voice") startRecognition();
+  if (mirror.host && mirror.connected) mirrorPublishScript();
+  if (mirror.follower) return; // followers wait for the host's position, no countdown
   if (settings.countdown) runCountdown(begin); else begin();
 }
 function begin(){
@@ -886,6 +949,7 @@ function begin(){
   if (settings.mode === "voice") toast("Start reading — the prompter follows your voice.", 2600);
 }
 function exitPrompter(){
+  if (mirror.host && mirror.client){ try { mirror.client.publish(mirrorTopic("stop"), "{}"); } catch(e){} }
   running = false; playing = false; recArmed = false;
   stopRecognition(); stopMeter(); leaveFullscreen();
   cancelAnimationFrame(rafId);
@@ -997,6 +1061,7 @@ function fullscreenTip(){
 }
 $("prPlay").onclick = function(ev){
   ev.stopPropagation();
+  if (mirror.follower){ toast("This device mirrors the host — control everything from the other device.", 3500); return; }
   playing = !playing;
   if (settings.mode === "voice") { if (playing) startRecognition(); else stopRecognition(); }
   refreshStatus();
@@ -1092,16 +1157,148 @@ window.addEventListener("resize", function(){ if (running) updateOrientation(); 
 applySettings();
 renderLibrary();
 
+/* ---------------- Live mirror: no accounts — a random room on a public MQTT relay ---------------- */
+var mirror = { client:null, code:"", host:false, follower:false, remoteW:null, lastPub:0, connected:false };
+var MIRROR_BROKER = "wss://broker.emqx.io:8084/mqtt";
+function mirrorTopic(kind){ return "voicecue/" + mirror.code + "/" + kind; }
+function loadMqtt(){
+  return new Promise(function(res, rej){
+    if (window.mqtt) return res();
+    var sc = document.createElement("script");
+    sc.src = "https://unpkg.com/mqtt@5.10.1/dist/mqtt.min.js";
+    sc.onload = function(){ window.mqtt ? res() : rej(new Error("cdn")); };
+    sc.onerror = function(){ rej(new Error("cdn")); };
+    document.head.appendChild(sc);
+  });
+}
+function mirrorStart(){
+  var alphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789", code = "";
+  var rnd = new Uint8Array(6); crypto.getRandomValues(rnd);
+  for (var i = 0; i < 6; i++) code += alphabet[rnd[i] % alphabet.length];
+  mirrorConnect(code, true);
+}
+function mirrorJoin(code){ mirrorConnect(code, false); }
+function mirrorConnect(code, asHost){
+  mirrorEnd(true);
+  mirror.code = code; mirror.host = asHost; mirror.follower = !asHost;
+  updateMirrorBar("Connecting…");
+  loadMqtt().then(function(){
+    var c = window.mqtt.connect(MIRROR_BROKER, { reconnectPeriod: 2000, connectTimeout: 8000 });
+    mirror.client = c;
+    c.on("connect", function(){
+      mirror.connected = true;
+      c.subscribe(mirrorTopic("#"));
+      if (asHost){
+        var link = CANONICAL_URL + "#m=" + code;
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).catch(function(){});
+        if (running && current) mirrorPublishScript();
+        updateMirrorBar("Mirror room " + code + " — link copied. Open it on the other device, or type the code there after tapping 📡.");
+      } else {
+        updateMirrorBar("Room " + code + " — waiting for the host device…");
+      }
+    });
+    c.on("message", function(topic, payload){ mirrorOnMessage(topic, payload); });
+    c.on("error", function(){ if (mirror.client === c) updateMirrorBar("Connection trouble — retrying…"); });
+    c.on("offline", function(){ mirror.connected = false; });
+  }).catch(function(){
+    mirror.code = ""; mirror.host = false; mirror.follower = false;
+    updateMirrorBar("");
+    toast("Couldn't reach the sync service — check the internet connection.", 5000);
+  });
+}
+function mirrorPublishScript(){
+  if (!mirror.client || !mirror.host || !current) return;
+  try { mirror.client.publish(mirrorTopic("script"), JSON.stringify({t: current.title, x: current.text}), {retain: true}); } catch(e){}
+}
+function mirrorPublishPos(w){
+  try { mirror.client.publish(mirrorTopic("pos"), JSON.stringify({w: w})); } catch(e){}
+}
+function mirrorOnMessage(topic, payload){
+  var kind = topic.split("/").pop(), msg;
+  try { msg = JSON.parse(payload.toString()); } catch(e){ return; }
+  if (mirror.host) return; // v1: the host is the sole controller; it ignores echoes
+  if (kind === "script" && msg && msg.x){
+    var existing = scripts.filter(function(s){ return s.text === msg.x; })[0];
+    if (!existing){
+      existing = {id: String(Math.random()).slice(2), title: msg.t || "Mirrored script", text: msg.x, updated: Date.now()};
+      scripts.push(existing); save(LS_SCRIPTS, scripts); renderLibrary();
+    }
+    updateMirrorBar("Room " + mirror.code + " — mirroring the host device.");
+    if (!running || (current && current.text !== msg.x)){
+      settings.mode = "manual"; // a follower never needs the mic
+      startPrompter(existing);
+      playing = false;
+      setStatus("manual", "Mirroring");
+    }
+  } else if (kind === "pos" && msg && typeof msg.w === "number"){
+    mirror.remoteW = msg.w;
+    if (running) setStatus("manual", "Mirroring");
+  } else if (kind === "stop"){
+    if (running) exitPrompter();
+    updateMirrorBar("Room " + mirror.code + " — the host ended prompting.");
+  }
+}
+function mirrorEnd(silent){
+  if (mirror.client){
+    try {
+      if (mirror.host) mirror.client.publish(mirrorTopic("script"), "", {retain: true});
+      mirror.client.end(true);
+    } catch(e){}
+  }
+  mirror.client = null; mirror.connected = false; mirror.follower = false;
+  mirror.host = false; mirror.code = ""; mirror.remoteW = null;
+  updateMirrorBar("");
+  if (!silent) toast("Mirror session ended.");
+}
+function updateMirrorBar(text){
+  var bar = $("mirrorBar");
+  if (!text){ bar.hidden = true; return; }
+  bar.hidden = false;
+  $("mirrorText").textContent = text;
+}
+$("mirrorBtn").onclick = function(){
+  if (mirror.client){ mirrorEnd(false); return; }
+  var choice = window.prompt("To MIRROR another device, enter its room code.\nLeave empty to START a new mirror room on this device.", "");
+  if (choice === null) return;
+  choice = choice.trim().toUpperCase();
+  if (choice) mirrorJoin(choice); else mirrorStart();
+};
+$("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
+
+/* boot: import a script or join a mirror room from the URL fragment */
+(function(){
+  var h = location.hash || "";
+  if (h.indexOf("#s=") === 0){
+    decompressText(h.slice(3)).then(function(json){
+      var p = JSON.parse(json);
+      if (!p || !p.x) throw new Error("bad");
+      var dupe = scripts.some(function(s){ return s.text === p.x; });
+      if (!dupe){
+        scripts.push({id: String(Math.random()).slice(2), title: p.t || "Shared script", text: p.x, updated: Date.now()});
+        save(LS_SCRIPTS, scripts); renderLibrary();
+      }
+      history.replaceState(null, "", location.pathname);
+      toast(dupe ? "You already have this script." : "“" + (p.t || "Shared script") + "” added from the link — tap ▶ to prompt.", 5500);
+    }).catch(function(){ toast("That share link couldn't be read.", 4500); });
+  } else if (h.indexOf("#m=") === 0){
+    var code = h.slice(3).trim().toUpperCase();
+    history.replaceState(null, "", location.pathname);
+    if (code) mirrorJoin(code);
+  }
+})();
+
 /* test/debug hook: simulate recognized speech without a microphone */
 window.__vc = {
   feed: function(t){ lastHeardTime = performance.now(); matchSpoken(t.split(/\s+/).map(normWord).filter(Boolean).slice(-8)); },
   grade: gradeChunk,
   set: function(k, v){ settings[k] = v; applySettings(); },
+  mirrorStart: mirrorStart, mirrorJoin: mirrorJoin, mirrorEnd: mirrorEnd,
   state: function(){
     return { pos: pos, curSent: curSent, flags: JSON.parse(JSON.stringify(sentFlags)),
       takes: JSON.parse(JSON.stringify(takes)), seek: seekTarget,
       banner: $("retryBanner").classList.contains("on"),
       bannerText: $("retryMsg").textContent,
+      mirror: {code: mirror.code, host: mirror.host, follower: mirror.follower, connected: mirror.connected, remoteW: mirror.remoteW},
       missed: words.map(function(w,i){ return w.missed ? i : -1; }).filter(function(x){ return x >= 0; }) };
   }
 };
