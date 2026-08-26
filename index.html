@@ -1125,8 +1125,17 @@ function noteUserScroll(ms){
   if (until > touchReleaseAt) touchReleaseAt = until;
 }
 function repositionFromScroll(){
-  if (!running || settings.mode !== "voice" || userTouching) return;
+  if (!running || userTouching) return;
   var np = nearestWordToGuide();
+  if (mirror.follower){
+    // scrubbing on a follower steers the host: send the seek, follow optimistically
+    mirror.remoteW = np;
+    if (mirror.client && mirror.connected){
+      try { mirror.client.publish(mirrorTopic("seek"), JSON.stringify({w: np})); } catch(e){}
+    }
+    return;
+  }
+  if (settings.mode !== "voice") return;
   if (np === pos) return;
   pos = np;
   lastMatchTime = 0; lastHeardTime = 0; velocity = 0; matchFloor = 0;
@@ -1196,7 +1205,14 @@ function fullscreenTip(){
 }
 $("prPlay").onclick = function(ev){
   ev.stopPropagation();
-  if (mirror.follower){ toast("This device mirrors the host — control everything from the other device.", 3500); return; }
+  if (mirror.follower){
+    if (mirror.client && mirror.connected){
+      var want = !mirror.remoteP;
+      try { mirror.client.publish(mirrorTopic("cmd"), JSON.stringify({k:"play", v: want})); } catch(e){}
+      toast(want ? "Resuming the host…" : "Pausing the host…", 1800);
+    }
+    return;
+  }
   playing = !playing;
   if (settings.mode === "voice") { if (playing) startRecognition(); else stopRecognition(); }
   refreshStatus();
@@ -1299,7 +1315,7 @@ applySettings();
 renderLibrary();
 
 /* ---------------- Live mirror: no accounts — a random room on a public MQTT relay ---------------- */
-var mirror = { client:null, code:"", host:false, follower:false, remoteW:null, lastPub:0, connected:false };
+var mirror = { client:null, code:"", host:false, follower:false, remoteW:null, remoteP:true, lastPub:0, connected:false };
 var MIRROR_BROKER = "wss://broker.emqx.io:8084/mqtt";
 function mirrorTopic(kind){ return "voicecue/" + mirror.code + "/" + kind; }
 function loadMqtt(){
@@ -1352,19 +1368,33 @@ function mirrorPublishScript(){
   try { mirror.client.publish(mirrorTopic("script"), JSON.stringify({t: current.title, x: current.text}), {retain: true}); } catch(e){}
 }
 function mirrorPublishPos(w){
-  try { mirror.client.publish(mirrorTopic("pos"), JSON.stringify({w: w})); } catch(e){}
+  try { mirror.client.publish(mirrorTopic("pos"), JSON.stringify({w: w, p: playing ? 1 : 0})); } catch(e){}
+}
+/* jump this (host) device to a word — used when a follower scrubs remotely */
+function jumpToWord(w){
+  if (!words.length) return;
+  pos = Math.max(0, Math.min(words.length - 1, w));
+  lastMatchTime = 0; lastHeardTime = 0; velocity = 0; matchFloor = 0;
+  justReset = true; pauseFlagged = false;
+  if (settings.perfect){ curSent = words[pos] ? words[pos].sent : 0; sentFlags = {}; hideBanner(); }
+  seekTarget = Math.max(0, targetScrollFor(pos));
 }
 function mirrorOnMessage(topic, payload){
   var kind = topic.split("/").pop(), msg;
   try { msg = JSON.parse(payload.toString()); } catch(e){ return; }
-  if (mirror.host) return; // v1: the host is the sole controller; it ignores echoes
+  if (mirror.host){
+    // followers can control the host remotely: scrub to a word, or pause/resume
+    if (kind === "seek" && msg && typeof msg.w === "number" && running) jumpToWord(msg.w);
+    else if (kind === "cmd" && msg && msg.k === "play" && running){ playing = !!msg.v; refreshStatus(); }
+    return;
+  }
   if (kind === "script" && msg && msg.x){
     var existing = scripts.filter(function(s){ return s.text === msg.x; })[0];
     if (!existing){
       existing = {id: String(Math.random()).slice(2), title: msg.t || "Mirrored script", text: msg.x, updated: Date.now()};
       scripts.push(existing); save(LS_SCRIPTS, scripts); renderLibrary();
     }
-    updateMirrorBar("Room " + mirror.code + " — mirroring the host device.");
+    updateMirrorBar("Room " + mirror.code + " — mirroring the host. Drag or ▶ here to control it remotely.");
     if (!running || (current && current.text !== msg.x)){
       settings.mode = "manual"; // a follower never needs the mic
       startPrompter(existing);
@@ -1373,7 +1403,8 @@ function mirrorOnMessage(topic, payload){
     }
   } else if (kind === "pos" && msg && typeof msg.w === "number"){
     mirror.remoteW = msg.w;
-    if (running) setStatus("manual", "Mirroring");
+    mirror.remoteP = msg.p !== 0;
+    if (running) setStatus(mirror.remoteP ? "manual" : "paused", mirror.remoteP ? "Mirroring" : "Mirroring · paused");
   } else if (kind === "stop"){
     if (running) exitPrompter();
     updateMirrorBar("Room " + mirror.code + " — the host ended prompting.");
@@ -1447,7 +1478,8 @@ window.__vc = {
       takes: JSON.parse(JSON.stringify(takes)), seek: seekTarget,
       banner: $("retryBanner").classList.contains("on"),
       bannerText: $("retryMsg").textContent,
-      mirror: {code: mirror.code, host: mirror.host, follower: mirror.follower, connected: mirror.connected, remoteW: mirror.remoteW},
+      mirror: {code: mirror.code, host: mirror.host, follower: mirror.follower, connected: mirror.connected, remoteW: mirror.remoteW, remoteP: mirror.remoteP},
+      playing: playing,
       missed: words.map(function(w,i){ return w.missed ? i : -1; }).filter(function(x){ return x >= 0; }) };
   }
 };
