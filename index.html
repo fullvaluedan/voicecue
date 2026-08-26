@@ -102,6 +102,11 @@
   #guide::before{left:6px;border-left:11px solid var(--accent);border-right:0}
   #guide::after{right:6px;border-right:11px solid var(--accent);border-left:0}
 
+  /* Clean reading mode: chrome fades out while actively rolling */
+  #statusChip,#timeLeft,#progress{transition:opacity .35s ease}
+  #prompter.clean #statusChip,#prompter.clean #timeLeft,#prompter.clean #progress{opacity:0}
+  @media (prefers-reduced-motion:reduce){#statusChip,#timeLeft,#progress{transition:none}}
+
   /* Status chip */
   #statusChip{position:absolute;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);
     z-index:5;display:flex;align-items:center;gap:7px;font-size:11.5px;font-weight:600;letter-spacing:.09em;
@@ -770,6 +775,14 @@ function setStatus(cls, txt){
   var chip = $("statusChip");
   chip.className = cls;
   $("statusText").textContent = txt;
+  updateClean();
+}
+/* hide the chrome while actively rolling; bring it back on pause, tap, settings, or a retake */
+function updateClean(){
+  var rolling = running && !hud.classList.contains("shown") && !$("sheet").classList.contains("open")
+    && !$("retryBanner").classList.contains("on")
+    && (mirror.follower ? mirror.remoteP : playing);
+  prompter.classList.toggle("clean", rolling);
 }
 function refreshStatus(){
   if (!running) return;
@@ -790,7 +803,7 @@ function frame(ts){
     mirror.lastPub = ts;
     mirrorPublishPos(nearestWordToGuide());
   }
-  if (ts - progAt > 500) { progAt = ts; updateProgress(ts); }
+  if (ts - progAt > 500) { progAt = ts; updateProgress(ts); updateClean(); }
   if (userTouching || ts < touchReleaseAt) { velocity = 0; return; }
   if (mirror.follower && mirror.remoteW != null) {                      // glide to wherever the host is
     var mt = Math.max(0, targetScrollFor(mirror.remoteW));
@@ -1007,8 +1020,9 @@ function startRetry(sent, reason){
   seekTarget = Math.max(0, targetScrollFor(pos));
   $("retryMsg").textContent = "Take " + takes[sent] + " — " + reason + ". Go again from the arrow.";
   $("retryBanner").classList.add("on");
+  updateClean();
 }
-function hideBanner(){ $("retryBanner").classList.remove("on"); }
+function hideBanner(){ $("retryBanner").classList.remove("on"); updateClean(); }
 function resetPerfect(){
   curSent = 0; sentFlags = {}; takes = {}; matchFloor = 0; seekTarget = null;
   justReset = false; pauseFlagged = false; cruiseV = 0; lastHeardTime = 0;
@@ -1102,7 +1116,7 @@ function runCountdown(done){
 
 /* ----- HUD ----- */
 var hud = $("hud");
-function hideHud(){ hud.classList.remove("shown"); }
+function hideHud(){ hud.classList.remove("shown"); updateClean(); }
 prompter.addEventListener("click", function(ev){
   var sheet = $("sheet");
   if (sheet.contains(ev.target)) return;                     // taps inside the sheet stay in the sheet
@@ -1110,6 +1124,7 @@ prompter.addEventListener("click", function(ev){
   // ev.target === hud means the empty area between the bars — that tap dismisses the overlay
   if (hud.contains(ev.target) && hud.classList.contains("shown") && ev.target !== hud) return;
   hud.classList.toggle("shown");
+  updateClean();
 });
 document.querySelector(".sheet-grab").addEventListener("click", function(){ $("sheet").classList.remove("open"); });
 document.addEventListener("keydown", function(e){
@@ -1178,7 +1193,7 @@ scroller.addEventListener("touchend", function(e){
 }, {passive:true});
 
 $("prExit").onclick = function(ev){ ev.stopPropagation(); exitPrompter(); };
-$("prSettings").onclick = function(ev){ ev.stopPropagation(); $("sheet").classList.add("open"); };
+$("prSettings").onclick = function(ev){ ev.stopPropagation(); $("sheet").classList.add("open"); updateClean(); };
 function enterFullscreen(onFail){
   var el = document.documentElement;
   var fn = el.requestFullscreen || el.webkitRequestFullscreen;
