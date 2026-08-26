@@ -326,6 +326,13 @@ var LS_SCRIPTS = "voicecue.scripts", LS_SETTINGS = "voicecue.settings", LS_POS =
 var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false, autoFull:true, lang:"" };
 var settings = loadJSON(LS_SETTINGS, defaults);
 for (var k in defaults) if (!(k in settings)) settings[k] = defaults[k];
+/* one-time repair: an old bug could permanently trap the mode on "manual" after a single mic failure */
+if (!settings._modeFix){
+  settings._modeFix = true;
+  if (settings.mode === "manual" && (window.SpeechRecognition || window.webkitSpeechRecognition ||
+      (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.speech))) settings.mode = "voice";
+  save(LS_SETTINGS, settings);
+}
 var scripts = loadJSON(LS_SCRIPTS, null);
 if (!scripts) {
   scripts = [{
@@ -809,10 +816,10 @@ function frame(ts){
         vTarget = Math.max(-50, Math.min(err * 1.6, settings.size * 9)); // behind → speed up, ahead → ease back
         if (Math.abs(err) < 4) vTarget = 0;
         if (vTarget > 0) cruiseV += (vTarget - cruiseV) * Math.min(1, dt * 1.5); // remember the reading pace
-      } else if (heardFresh) {
-        vTarget = cruiseV;                         // still talking but off-script → hold pace until we re-lock
+      } else if (heardFresh && (now2 - lastMatchTime) < 6000) {
+        vTarget = cruiseV;                         // still talking but off-script → hold pace briefly until we re-lock
       } else {
-        vTarget = 0;                               // silence → hold
+        vTarget = 0;                               // silence, or off-script too long → hold
       }
       if (settings.perfect && !pauseFlagged && lastHeardTime > 0 && (now2 - lastHeardTime) > 1600
           && pos > (sentStartArr[curSent] || 0) && pos < words.length - 1 && !words[pos].pauseOK) {
@@ -875,7 +882,7 @@ function startRecognition(){
       recShouldRun = false;
       if (!gotSpeech) {
         micBlocked = true;
-        settings.mode = "manual"; saveSettings(); applySettings();
+        settings.mode = "manual"; applySettings(); // this session only — never persisted
         playing = false; refreshStatus();
         toast("Microphone unavailable — switched to manual mode. On iPhone, open this page directly in Safari and allow the mic when asked (run the Mic check on the home screen to verify).", 6000);
       } else {
@@ -1023,7 +1030,7 @@ document.addEventListener("visibilitychange", function(){
 function startPrompter(s){
   current = s;
   if (settings.mode === "voice" && (!SR || micBlocked)) {
-    settings.mode = "manual"; saveSettings();
+    settings.mode = "manual"; // this session only — never persisted
     toast(SR ? "Microphone blocked — using manual mode." : "This browser has no speech recognition — using manual mode.", 4200);
   }
   buildContent(s.text);
@@ -1065,6 +1072,7 @@ function begin(){
   if (settings.mode === "voice") { startRecognition(); startMeter(); } // recognition is a no-op if already primed from the tap
   refreshStatus();
   if (settings.mode === "voice") toast("Start reading — the prompter follows your voice.", 2600);
+  else if (!mirror.follower) toast("Manual mode — fixed-speed scrolling. Tap the screen, then 🖐, for voice tracking.", 3800);
 }
 function exitPrompter(){
   if (current && words.length){ positions[current.id] = {w: nearestWordToGuide(), t: Date.now()}; save(LS_POS, positions); }
