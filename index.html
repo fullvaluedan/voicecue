@@ -153,7 +153,9 @@
     transform:translateY(105%);transition:transform .22s ease;padding:8px 18px calc(22px + env(safe-area-inset-bottom))}
   #sheet.open{transform:translateY(0)}
   @media (prefers-reduced-motion:reduce){#sheet{transition:none}#hud{transition:none}}
-  .sheet-grab{width:42px;height:4px;border-radius:2px;background:var(--line);margin:6px auto 14px}
+  .sheet-grab{width:42px;height:4px;border-radius:2px;background:var(--line);margin:6px auto 14px;cursor:pointer;
+    position:relative}
+  .sheet-grab::after{content:"";position:absolute;inset:-14px -60px}  /* generous tap target for closing */
   .set-group{margin-bottom:20px}
   .set-label{font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;
     display:flex;justify-content:space-between;align-items:baseline}
@@ -1102,10 +1104,16 @@ function runCountdown(done){
 var hud = $("hud");
 function hideHud(){ hud.classList.remove("shown"); }
 prompter.addEventListener("click", function(ev){
-  if (hud.contains(ev.target) && hud.classList.contains("shown")) return;
-  if ($("sheet").contains(ev.target)) return;
-  if ($("sheet").classList.contains("open")) { $("sheet").classList.remove("open"); return; }
+  var sheet = $("sheet");
+  if (sheet.contains(ev.target)) return;                     // taps inside the sheet stay in the sheet
+  if (sheet.classList.contains("open")) { sheet.classList.remove("open"); return; } // any tap outside closes it
+  // ev.target === hud means the empty area between the bars — that tap dismisses the overlay
+  if (hud.contains(ev.target) && hud.classList.contains("shown") && ev.target !== hud) return;
   hud.classList.toggle("shown");
+});
+document.querySelector(".sheet-grab").addEventListener("click", function(){ $("sheet").classList.remove("open"); });
+document.addEventListener("keydown", function(e){
+  if (e.key === "Escape" && running){ $("sheet").classList.remove("open"); hideHud(); }
 });
 /* touch: one finger drags to reposition; two fingers pinch to resize text.
    After any user scroll (drag, momentum, or mouse wheel) settles, voice tracking
