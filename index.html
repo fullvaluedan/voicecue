@@ -19,6 +19,7 @@
     --ok:#4DC97B;
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  [hidden]{display:none!important}   /* flex bars (mirror, script link) must still hide */
   html,body{height:100%}
   body{
     margin:0;background:var(--ground);color:var(--ink);
@@ -45,6 +46,14 @@
   .mirror-bar{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--accent);
     border-radius:12px;padding:11px 14px;margin-bottom:18px;font-size:13px;line-height:1.45;color:var(--ink)}
   .mirror-bar button{margin-left:auto;color:var(--live);font-weight:600;font-size:13px;flex:none}
+  .sync-bar{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:11px 14px;margin-bottom:18px;font-size:13px;line-height:1.45;color:var(--muted)}
+  .sync-bar.on{border-color:var(--ok);color:var(--ink)}
+  .sync-bar button{margin-left:auto;color:var(--accent);font-weight:600;font-size:13px;flex:none}
+  .card.focus{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+  .ed-link{display:flex;align-items:center;gap:8px;margin-top:10px;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;padding:6px 6px 6px 14px;font-size:12.5px;color:var(--muted);line-height:1.45}
+  .ed-link span{flex:1;min-width:0;word-break:break-all}
   .lib-label{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:8px 0 10px}
   .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:12px;
     display:flex;align-items:center;gap:12px}
@@ -205,6 +214,7 @@
   <p class="tagline">A teleprompter that listens. It follows your voice — pausing when you stumble, catching up when you rush.</p>
   <div class="cap-badge" id="capBadge"><span class="led"></span><span id="capText">Checking microphone support…</span></div><button class="chip-btn" id="micCheck">🎙 Mic check</button><button class="chip-btn" id="mirrorBtn">📡 Mirror devices</button>
   <div class="mirror-bar" id="mirrorBar" hidden><span id="mirrorText"></span><button id="mirrorEndBtn">End</button></div>
+  <div class="sync-bar" id="syncBar"><span id="syncText">Scripts are saved on this device only.</span><button id="syncBtn">Sign in with GitHub</button></div>
   <div class="lib-label">Scripts</div>
   <div id="scriptList"></div>
   <button class="new-btn" id="newBtn">＋ New script</button>
@@ -221,7 +231,8 @@
   </div>
   <input id="edTitle" placeholder="Script title" maxlength="80">
   <textarea id="edText" placeholder="Paste or type your script here…"></textarea>
-  <p class="ed-hint">Blank lines become paragraph breaks on the prompter. Scripts are saved on this device only.</p>
+  <p class="ed-hint">Blank lines become paragraph breaks on the prompter. <span id="edWhere">Scripts are saved on this device only.</span></p>
+  <div class="ed-link" id="edLink" hidden><span id="edLinkText"></span><button class="txt-btn ghost" id="edCopyLink">Copy link</button></div>
 </div>
 
 <!-- ================= PROMPTER ================= -->
@@ -330,6 +341,10 @@ var $ = function(id){ return document.getElementById(id); };
 
 /* ---------------- State & storage ---------------- */
 var LS_SCRIPTS = "voicecue.scripts", LS_SETTINGS = "voicecue.settings", LS_POS = "voicecue.positions";
+var LS_DELETED = "voicecue.deleted", LS_GH = "voicecue.gh";
+var deletedIds = loadJSON(LS_DELETED, {});   // script id -> when it was deleted (synced, so deletes spread)
+var gh = loadJSON(LS_GH, null);              // GitHub sign-in: {token, login, gistId}
+var sync = { busy: false, again: false, timer: null, at: 0, err: "" };   // defined early: the library draws it at boot
 var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false, autoFull:true, lang:"" };
 var settings = loadJSON(LS_SETTINGS, defaults);
 for (var k in defaults) if (!(k in settings)) settings[k] = defaults[k];
@@ -343,7 +358,7 @@ if (!settings._modeFix){
 var scripts = loadJSON(LS_SCRIPTS, null);
 if (!scripts) {
   scripts = [{
-    id: String(Math.random()).slice(2), title: "Welcome to VoiceCue",
+    id: "welcome", title: "Welcome to VoiceCue",   // fixed id so synced devices share one copy
     updated: Date.now(),
     text: "Welcome to VoiceCue, the teleprompter that listens while you read.\n\nStart reading these words out loud, and the screen will begin to scroll on its own. There is no speed to set, because the speed is you. Read quickly, and the text will keep pace. Slow down for emphasis, and it slows down with you.\n\nNow try something. Stop talking for a moment.\n\nSee that? The prompter waited. It will do the same thing if you stumble over a word or go off script, and it picks right back up when you find your place again.\n\nTap the screen once to reveal the controls. From there you can change the font size, pick new colors, flip the text into mirror mode for a beam splitter rig, or switch to manual mode with a fixed scrolling speed.\n\nWhen you are ready, close this script and paste in your own. Happy recording."
   }];
@@ -444,7 +459,10 @@ function fetchPaste(code){
     });
   });
 }
-function save(key, val){ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){} }
+function save(key, val){
+  try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){}
+  if (key === LS_SCRIPTS && window.__vcSyncSoon) window.__vcSyncSoon();   // signed in: push the change to GitHub
+}
 function saveSettings(){ save(LS_SETTINGS, settings); }
 
 /* Native speech bridge — active only inside the VoiceCue iOS app (WKWebView),
@@ -529,6 +547,7 @@ function renderLibrary(){
     card.appendChild(meta); card.appendChild(share); card.appendChild(edit); card.appendChild(play);
     list.appendChild(card);
   });
+  renderSyncBar();
   var badge = $("capBadge");
   if (SR && !micBlocked) { badge.classList.remove("no"); $("capText").textContent = "Voice tracking available"; }
   else { badge.classList.add("no"); $("capText").textContent = SR ? "Microphone blocked — manual mode" : "No speech support — manual mode"; }
@@ -542,6 +561,7 @@ function openEditor(id){
   $("edTitle").value = s ? s.title : "";
   $("edText").value = s ? s.text : "";
   $("edDelete").style.display = s ? "" : "none";
+  renderEditorLink(s);
   show("editor");
 }
 $("newBtn").onclick = function(){ openEditor(null); };
@@ -596,6 +616,7 @@ $("edSave").onclick = function(){
 $("edDelete").onclick = function(){
   if (!editingId) return;
   if (!confirm("Delete this script? This can't be undone.")) return;
+  deletedIds[editingId] = Date.now(); save(LS_DELETED, deletedIds);   // so sync removes it on your other devices too
   scripts = scripts.filter(function(s){ return s.id!==editingId; });
   save(LS_SCRIPTS, scripts);
   renderLibrary(); show("library"); toast("Deleted.");
@@ -1114,6 +1135,8 @@ document.addEventListener("visibilitychange", function(){
 /* ----- session control ----- */
 function startPrompter(s){
   current = s;
+  // the address bar becomes this script's own page: bookmark it or reopen it on any signed-in device
+  try { history.replaceState(null, "", location.pathname + "#script=" + encodeURIComponent(s.id)); } catch(e){}
   if (settings.mode === "voice" && (!SR || micBlocked)) {
     settings.mode = "manual"; // this session only — never persisted
     toast(SR ? "Microphone blocked — using manual mode." : "This browser has no speech recognition — using manual mode.", 4200);
@@ -1169,6 +1192,7 @@ function exitPrompter(){
   releaseWake();
   $("countdown").classList.remove("on");
   $("sheet").classList.remove("open");
+  try { history.replaceState(null, "", location.pathname); } catch(e){}
   show("library");
   renderLibrary();
 }
@@ -1523,6 +1547,175 @@ $("mirrorBtn").onclick = function(){
 };
 $("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
 
+/* ---------------- GitHub sync: scripts live in one secret gist on your account ----------------
+   Sign-in goes through a tiny Cloudflare Worker (auth-worker/) that swaps GitHub's
+   one-time code for a token limited to gists. The token stays in this browser only. */
+var AUTH_URL = "https://voicecue-auth.fullvaluedan.workers.dev";
+var GIST_FILE = "voicecue-scripts.json", GIST_DESC = "VoiceCue scripts (synced by the VoiceCue app)";
+
+function ghApi(path, opts){
+  opts = opts || {};
+  return fetch("https://api.github.com" + path, {
+    method: opts.method || "GET",
+    headers: { Authorization: "Bearer " + gh.token, Accept: "application/vnd.github+json",
+               "Content-Type": "application/json" },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    cache: "no-store",
+  }).then(function(r){
+    if (r.status === 401){ ghSignOut(true); throw new Error("signed-out"); }
+    if (!r.ok) throw new Error("http " + r.status);
+    return r.json();
+  });
+}
+function readGistFile(g){
+  var f = g.files && g.files[GIST_FILE];
+  if (!f) return Promise.resolve(null);
+  var text = f.truncated
+    ? fetch(f.raw_url, {cache: "no-store"}).then(function(r){ return r.text(); })
+    : Promise.resolve(f.content);
+  return text.then(function(t){ try { return JSON.parse(t); } catch(e){ return null; } });
+}
+/* find the sync gist (remembered id, else search your gists, else create it) */
+function findGist(){
+  if (gh.gistId){
+    return ghApi("/gists/" + gh.gistId).catch(function(e){
+      if (e.message === "signed-out") throw e;
+      gh.gistId = ""; save(LS_GH, gh); return findGist();
+    });
+  }
+  function page(n){
+    return ghApi("/gists?per_page=100&page=" + n).then(function(list){
+      var hit = list.filter(function(g){ return g.files && g.files[GIST_FILE]; })[0];
+      if (hit) return ghApi("/gists/" + hit.id);
+      if (list.length === 100 && n < 10) return page(n + 1);
+      return ghApi("/gists", {method: "POST", body: {description: GIST_DESC, public: false,
+        files: (function(){ var f = {}; f[GIST_FILE] = {content: JSON.stringify({v: 1, scripts: [], deleted: {}})}; return f; })()}});
+    });
+  }
+  return page(1).then(function(g){ gh.gistId = g.id; save(LS_GH, gh); return g; });
+}
+/* newest edit wins per script; deletes win over older edits; identical copies collapse to one */
+function mergeScripts(local, remote, delA, delB){
+  var del = {}, k;
+  for (k in delA) del[k] = delA[k];
+  for (k in delB) if (!del[k] || delB[k] > del[k]) del[k] = delB[k];
+  var byId = {};
+  local.concat(remote).forEach(function(s){
+    if (!s || !s.id) return;
+    if (!byId[s.id] || (s.updated || 0) > (byId[s.id].updated || 0)) byId[s.id] = s;
+  });
+  var seen = {}, out = [];
+  Object.keys(byId).sort().forEach(function(id){
+    var s = byId[id];
+    if (del[id] && del[id] >= (s.updated || 0)) return;
+    var key = s.title + "\u0000" + s.text;
+    if (seen[key]) return;                       // same script made separately on two devices
+    seen[key] = 1; out.push(s);
+  });
+  return { scripts: out, deleted: del };
+}
+function sameScripts(a, b){
+  if (a.length !== b.length) return false;
+  var m = {}; a.forEach(function(s){ m[s.id] = s.updated + "|" + s.title + "|" + s.text; });
+  return b.every(function(s){ return m[s.id] === s.updated + "|" + s.title + "|" + s.text; });
+}
+function syncNow(){
+  if (!gh || !gh.token) return Promise.resolve();
+  if (sync.busy){ sync.again = true; return Promise.resolve(); }
+  sync.busy = true; sync.err = ""; renderSyncBar();
+  return findGist().then(function(g){ return readGistFile(g).then(function(remote){ return [g, remote]; }); })
+  .then(function(res){
+    var remote = res[1] || {scripts: [], deleted: {}};
+    var m = mergeScripts(scripts, remote.scripts || [], deletedIds, remote.deleted || {});
+    deletedIds = m.deleted; try { localStorage.setItem(LS_DELETED, JSON.stringify(deletedIds)); } catch(e){}
+    if (!sameScripts(m.scripts, scripts)){
+      scripts = m.scripts;
+      try { localStorage.setItem(LS_SCRIPTS, JSON.stringify(scripts)); } catch(e){}  // no re-sync loop
+      if ($("library").classList.contains("active")) renderLibrary();
+    }
+    var remoteDelKeys = Object.keys(remote.deleted || {}).length;
+    if (!res[1] || !sameScripts(m.scripts, remote.scripts || []) || remoteDelKeys !== Object.keys(m.deleted).length){
+      var files = {}; files[GIST_FILE] = {content: JSON.stringify({v: 1, scripts: m.scripts, deleted: m.deleted})};
+      return ghApi("/gists/" + gh.gistId, {method: "PATCH", body: {files: files}});
+    }
+  })
+  .then(function(){ sync.at = Date.now(); })
+  .catch(function(e){ if (e.message !== "signed-out") sync.err = navigator.onLine === false ? "offline" : "error"; })
+  .then(function(){
+    sync.busy = false; renderSyncBar();
+    if (pendingScriptLink) openScriptLink(pendingScriptLink, true);
+    if (sync.again){ sync.again = false; syncNow(); }
+  });
+}
+window.__vcSyncSoon = function(){
+  if (!gh || !gh.token) return;
+  clearTimeout(sync.timer); sync.timer = setTimeout(syncNow, 700);
+};
+function ghSignIn(){
+  location.href = AUTH_URL + "/login?return=" + encodeURIComponent(location.origin + location.pathname);
+}
+function ghSignOut(expired){
+  gh = null; try { localStorage.removeItem(LS_GH); } catch(e){}
+  renderSyncBar(); renderEditorLink(null);
+  toast(expired ? "GitHub sign-in expired. Sign in again to keep syncing." : "Signed out. Your scripts stay on this device.", 4500);
+}
+function ghFinishSignIn(token){
+  gh = {token: token, login: "", gistId: ""}; save(LS_GH, gh);
+  renderSyncBar();
+  ghApi("/user").then(function(u){ gh.login = u.login; save(LS_GH, gh); renderSyncBar();
+    toast("Signed in as " + u.login + ". Your scripts now sync to every device you sign in on.", 5000); })
+    .catch(function(){});
+  syncNow();
+}
+function ago(ts){
+  var s = Math.round((Date.now() - ts) / 1000);
+  return s < 60 ? "just now" : s < 3600 ? Math.round(s / 60) + " min ago" : Math.round(s / 3600) + " h ago";
+}
+function renderSyncBar(){
+  var bar = $("syncBar"); if (!bar) return;
+  var on = !!(gh && gh.token);
+  bar.classList.toggle("on", on);
+  $("syncBtn").textContent = on ? "Sign out" : "Sign in with GitHub";
+  $("syncText").textContent = !on ? "Scripts are saved on this device only. Sign in to use them on all your devices."
+    : sync.busy ? "☁ Syncing…"
+    : sync.err ? (sync.err === "offline" ? "☁ Offline. Changes will sync when you're back online." : "☁ Couldn't reach GitHub. Will retry.")
+    : "☁ Synced to GitHub" + (gh.login ? " as " + gh.login : "") + (sync.at ? " · " + ago(sync.at) : "");
+  $("edWhere").textContent = on ? "Saved to this device and synced to your GitHub." : "Scripts are saved on this device only.";
+}
+$("syncBtn").onclick = function(){ if (gh && gh.token) ghSignOut(false); else ghSignIn(); };
+document.addEventListener("visibilitychange", function(){
+  if (document.visibilityState === "visible" && gh && gh.token && !running) syncNow();
+});
+window.addEventListener("online", function(){ if (gh && gh.token) syncNow(); });
+
+/* each script has its own page: CANONICAL_URL#script=<id> */
+function scriptLink(s){ return CANONICAL_URL + "#script=" + encodeURIComponent(s.id); }
+function renderEditorLink(s){
+  var row = $("edLink");
+  if (!s){ row.hidden = true; return; }
+  row.hidden = false;
+  $("edLinkText").textContent = (gh && gh.token ? "Opens on any device you're signed in on: " : "This script's page (sign in to open it on other devices): ") + scriptLink(s);
+  $("edCopyLink").onclick = function(){ copyLink(scriptLink(s), "Link copied. Bookmark it to jump straight to “" + (s.title || "this script") + "”."); };
+}
+var pendingScriptLink = null;
+function openScriptLink(id, afterSync){
+  var s = scripts.filter(function(x){ return x.id === id; })[0];
+  if (!s){
+    if (gh && gh.token && !afterSync){ pendingScriptLink = id; toast("Loading your synced scripts…", 2500); syncNow(); return; }
+    pendingScriptLink = null;
+    toast(gh && gh.token ? "That script isn't in your synced scripts (it may have been deleted)."
+      : "That script lives in your GitHub sync. Sign in with GitHub (top of the page) to open it.", 6000);
+    return;
+  }
+  pendingScriptLink = null;
+  show("library"); renderLibrary();
+  var cards = document.querySelectorAll("#scriptList .card");
+  var idx = scripts.indexOf(s);       // renderLibrary keeps the scripts order
+  var card = cards[idx];
+  if (card){ card.classList.add("focus"); card.scrollIntoView({block: "center"}); }
+  toast("“" + (s.title || "Untitled") + "”: tap ▶ to start.", 4500);
+}
+
 /* import a script or join a mirror room from the URL fragment: on load, and again
    whenever a new link is opened while the app is already open in this tab */
 (function(){
@@ -1558,16 +1751,28 @@ $("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
     var code = h.slice(3).trim().toUpperCase();
     history.replaceState(null, "", location.pathname);
     if (code) mirrorJoin(code);
+  } else if (h.indexOf("#gh=") === 0){              // back from GitHub sign-in
+    var token = decodeURIComponent(h.slice(4));
+    history.replaceState(null, "", location.pathname);
+    ghFinishSignIn(token);
+    return true;
+  } else if (h.indexOf("#gherr=") === 0){
+    history.replaceState(null, "", location.pathname);
+    toast("GitHub sign-in didn't finish. Try again.", 5000);
+  } else if (h.indexOf("#script=") === 0){          // a script's own page
+    openScriptLink(decodeURIComponent(h.slice(8)), false);
   }
   }
-  handleHash();
+  var signedInNow = handleHash();
   window.addEventListener("hashchange", handleHash);
+  if (!signedInNow && gh && gh.token) syncNow();   // pull the latest scripts on every open
 })();
 
 /* test/debug hook: simulate recognized speech without a microphone */
 window.__vc = {
   feed: function(t){ lastHeardTime = performance.now(); matchSpoken(t.split(/[\s\-–—\/]+/).map(normWord).filter(Boolean).slice(-12)); },
   grade: gradeChunk,
+  sync: syncNow, ghFinish: ghFinishSignIn, scripts: function(){ return scripts; }, syncState: function(){ return sync; },
   tick: function(ts){ cancelAnimationFrame(rafId); frame(ts); cancelAnimationFrame(rafId); },  // step one frame by hand
   set: function(k, v){ settings[k] = v; applySettings(); },
   mirrorStart: mirrorStart, mirrorJoin: mirrorJoin, mirrorEnd: mirrorEnd,
