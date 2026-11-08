@@ -581,7 +581,12 @@ $("edSave").onclick = function(){
   if (!text.trim()) { toast("Script is empty — nothing to save."); return; }
   var title = $("edTitle").value.trim() || text.trim().split(/\s+/).slice(0,5).join(" ");
   if (editingId) {
-    scripts.forEach(function(s){ if (s.id===editingId){ s.title=title; s.text=text; s.updated=Date.now(); } });
+    scripts.forEach(function(s){
+      if (s.id!==editingId) return;
+      // new text: the saved "resume here" spot pointed into the old version, so drop it
+      if (s.text !== text){ delete positions[s.id]; save(LS_POS, positions); }
+      s.title=title; s.text=text; s.updated=Date.now();
+    });
   } else {
     scripts.push({ id:String(Math.random()).slice(2), title:title, text:text, updated:Date.now() });
   }
@@ -597,7 +602,10 @@ $("edDelete").onclick = function(){
 };
 
 /* ---------------- Word matching helpers ---------------- */
-function normWord(w){ return w.toLowerCase().replace(/[^a-z0-9']/g, ""); }
+/* letters and digits in any language; curly apostrophes count as straight ones */
+function normWord(w){
+  return w.toLowerCase().replace(/[’‘]/g, "'").replace(/[^\p{L}\p{N}']/gu, "").replace(/^'+|'+$/g, "");
+}
 function lev(a, b, max){
   if (Math.abs(a.length-b.length) > max) return max+1;
   var prev = [], cur = [], i, j;
@@ -661,7 +669,7 @@ function updateProgress(ts){
   tl.textContent = label;
   if (current && ts - posSaveAt > 3000){
     posSaveAt = ts;
-    positions[current.id] = {w: w, t: Date.now()};
+    positions[current.id] = {w: w, t: Date.now(), n: words.length};
     save(LS_POS, positions);
   }
 }
@@ -703,7 +711,7 @@ var prompter = $("prompter"), scroller = $("promptScroll"), content = $("promptC
 
 function buildContent(text){
   content.innerHTML = "";
-  words = []; sentStartArr = [0];
+  words = []; sentStartArr = [0]; layoutKey = "";
   var sentIdx = 0, pendingBreak = false;
   text.split(/\n\s*\n/).forEach(function(para){
     var p = document.createElement("p");
@@ -712,12 +720,15 @@ function buildContent(text){
       var span = document.createElement("span");
       span.textContent = raw + " ";
       p.appendChild(span);
-      var n = normWord(raw);
-      if (!n) return;
+      // "AI-powered" or "word—word" is two spoken words, so it becomes two tracked words on one span
+      var parts = raw.split(/[-–—\/]+/).map(normWord).filter(Boolean);
+      if (!parts.length) return;
       if (pendingBreak){ sentIdx++; sentStartArr[sentIdx] = words.length; pendingBreak = false; }
       var endS = /[.!?…]["'’”)\]]*$/.test(raw);
       var pauseOK = endS || /[,;:—–]["'’”)\]]*$/.test(raw) || raw.slice(-1) === "-" || i === raws.length - 1;
-      words.push({ norm:n, el:span, sent:sentIdx, pauseOK:pauseOK, missed:false });
+      parts.forEach(function(n, j){
+        words.push({ norm:n, el:span, sent:sentIdx, pauseOK: j === parts.length - 1 && pauseOK, missed:false, y:0 });
+      });
       if (endS) pendingBreak = true;
     });
     pendingBreak = true; // a paragraph break always ends a sentence
@@ -764,11 +775,31 @@ function updatePromptPadding(){
   content.style.paddingTop = Math.round(h * 0.38) + "px";
   content.style.paddingBottom = Math.round(h * 0.70) + "px";
 }
+/* Each word gets a y that moves smoothly through its line toward the next line,
+   so the scroll glides word by word instead of jumping a whole line at a time.
+   Re-measured only when the layout changes (font size, width, rotation). */
+var layoutKey = "";
+function ensureLayout(){
+  var key = content.offsetWidth + "x" + content.offsetHeight;
+  if (key === layoutKey) return;
+  layoutKey = key;
+  var i = 0, n = words.length;
+  while (i < n){
+    var top = words[i].el.offsetTop, h = words[i].el.offsetHeight, j = i;
+    while (j < n && words[j].el.offsetTop === top) j++;
+    var c = top + h / 2;
+    var next = j < n ? words[j].el.offsetTop + words[j].el.offsetHeight / 2 : c + h;
+    if (next - c > h * 1.6) next = c + h;   // paragraph gap: don't race through the blank space
+    for (var k = i; k < j; k++) words[k].y = c + (k - i) / (j - i) * (next - c);
+    i = j;
+  }
+}
 function targetScrollFor(idx){
   if (!words.length) return 0;
+  ensureLayout();
   idx = Math.max(0, Math.min(idx, words.length-1));
-  var el = words[idx].el;
-  return el.offsetTop + el.offsetHeight/2 - guideY();
+  var a = Math.floor(idx), b = Math.min(words.length - 1, a + 1), f = idx - a;
+  return words[a].y + (words[b].y - words[a].y) * f - guideY();
 }
 
 function setStatus(cls, txt){
@@ -818,24 +849,28 @@ function frame(ts){
     velocity = 0; return;
   }
 
+  /* The browser rounds scrollTop to whole (device) pixels, so slow speeds used to be
+     thrown away each frame: the text stalled, fell behind, then rushed. Keep our own
+     fractional position and only resync when something else moved the scroll. */
+  if (Math.abs(scroller.scrollTop - scrollF) > 1.5) scrollF = scroller.scrollTop;
   var vTarget = 0;
   if (playing) {
     if (settings.mode === "manual") {
       vTarget = settings.manualSpeed;
     } else {
       var now2 = performance.now();
-      var err = targetScrollFor(pos) - scroller.scrollTop;
-      var matchFresh = lastMatchTime > 0 && (now2 - lastMatchTime) <= 1300;
-      var heardFresh = lastHeardTime > 0 && (now2 - lastHeardTime) <= 1500;
-      if (matchFresh) {
-        vTarget = Math.max(-50, Math.min(err * 1.6, settings.size * 9)); // behind → speed up, ahead → ease back
-        if (Math.abs(err) < 4) vTarget = 0;
-        if (vTarget > 0) cruiseV += (vTarget - cruiseV) * Math.min(1, dt * 1.5); // remember the reading pace
-      } else if (heardFresh && (now2 - lastMatchTime) < 6000) {
-        vTarget = cruiseV;                         // still talking but off-script → hold pace briefly until we re-lock
-      } else {
-        vTarget = 0;                               // silence, or off-script too long → hold
-      }
+      /* Speech results arrive in late bursts, so between them we glide ahead at your
+         measured pace, at most 2 words past the last word heard. When you stop or
+         go off-script the glide stops there and the text holds; nothing coasts on. */
+      var talking = lastHeardTime > 0 && (now2 - lastHeardTime) <= 1200;
+      var onScript = lastMatchTime > 0 && (now2 - lastMatchTime) <= 2500;
+      var ahead = (talking && onScript && advanceAt) ? Math.min(2, (now2 - advanceAt) / 1000 * wps) : 0;
+      if (words[pos]) ahead = Math.min(ahead, sentEnd(words[pos].sent) - pos);  // never glide past the sentence end
+      var err = targetScrollFor(pos + ahead) - scrollF;
+      var lineH = settings.size * 1.42;
+      vTarget = Math.max(-settings.size * 14, Math.min(err * 2.4, settings.size * 12));
+      if (Math.abs(err) < 3) vTarget = 0;
+      else if (err < 0 && err > -lineH * 1.2) vTarget = 0;   // a hair ahead: wait for the voice, don't wobble back
       if (settings.perfect && !pauseFlagged && lastHeardTime > 0 && (now2 - lastHeardTime) > 1600
           && pos > (sentStartArr[curSent] || 0) && pos < words.length - 1 && !words[pos].pauseOK) {
         pauseFlagged = true; flag(curSent, "a pause mid-sentence");
@@ -859,9 +894,11 @@ function frame(ts){
       }
     }
   }
-  velocity += (vTarget - velocity) * Math.min(1, dt * 5);
+  velocity += (vTarget - velocity) * Math.min(1, dt * 7);
   if (Math.abs(velocity) > 0.5) {
-    scroller.scrollTop += velocity * dt;
+    var maxF = scroller.scrollHeight - scroller.clientHeight;
+    scrollF = Math.max(0, Math.min(maxF, scrollF + velocity * dt));
+    scroller.scrollTop = scrollF;
     var maxScroll = scroller.scrollHeight - scroller.clientHeight;
     if (settings.mode === "manual" && scroller.scrollTop >= maxScroll - 1) {
       playing = false; velocity = 0; refreshStatus();
@@ -884,8 +921,8 @@ function startRecognition(){
     if (!recArmed) { r.__done = ev.results.length; return; } // primed during countdown: ignore
     var txt = "";
     for (var i=0; i<ev.results.length; i++) txt += ev.results[i][0].transcript + " ";
-    var spoken = txt.split(/\s+/).map(normWord).filter(Boolean);
-    if (spoken.length) { lastHeardTime = performance.now(); lastTranscript = txt; matchSpoken(spoken.slice(-8)); }
+    var spoken = txt.split(/[\s\-–—\/]+/).map(normWord).filter(Boolean);
+    if (spoken.length) { lastHeardTime = performance.now(); lastTranscript = txt; matchSpoken(spoken.slice(-12)); }
     for (var j = r.__done; j < ev.results.length; j++){
       if (!ev.results[j].isFinal) break;
       r.__done = j + 1;
@@ -921,46 +958,78 @@ function stopRecognition(){
   if (rec) { try { rec.stop(); } catch(e){} rec = null; }
 }
 
+/* Align the most recent spoken words backwards against the script ending at word e.
+   The newest spoken word must match e; after that, one slip (extra, skipped, or
+   misheard word) is allowed. Only the matched run counts, so older speech from
+   before a jump (a retake, a skip ahead) doesn't drag the score down. */
+function suffixMatch(tail, e){
+  var k = tail.length - 1, i = e, score = 0, slips = 0, hits = [];
+  while (k >= 0 && i >= 0){
+    var s = simWords(tail[k], words[i].norm);
+    if (s > 0){ score += s; hits.push(i); k--; i--; continue; }
+    if (!hits.length || ++slips > 1) break;
+    if (k > 0 && simWords(tail[k-1], words[i].norm) > 0) k--;          // extra spoken word
+    else if (i > 0 && simWords(tail[k], words[i-1].norm) > 0) i--;     // skipped script word
+    else { k--; i--; }                                                // misheard word
+  }
+  // full: every recent spoken word matched, so any gap before them is just speech we no longer hold
+  return {score: score, hits: hits, full: k < 0};
+}
+var advanceAt = 0, wps = 2.4, scrollF = 0;   // when pos last moved forward; live reading pace in words/sec
 function matchSpoken(tail){
   if (!words.length) return;
+  tail = tail.filter(function(w){ return !FILLERS[w]; });
+  if (!tail.length) return;
   var now = performance.now();
-  // widen the search window the longer we've been off-script, so we can re-lock after a skip
-  var reach = 45 + (lastMatchTime ? Math.min(220, Math.floor((now - lastMatchTime)/1000) * 30) : 0);
-  var lo = Math.max(matchFloor, pos - 8), hi = Math.min(words.length - 1, pos + reach);
-  var best = -1, bestScore = 0;
+  // widen the forward window the longer we've been off-script, so we can re-lock after a skip
+  var reach = 40 + (lastMatchTime ? Math.min(220, Math.floor((now - lastMatchTime)/1000) * 30) : 0);
+  var lo = Math.max(matchFloor, pos - 150), hi = Math.min(words.length - 1, pos + reach);
+  var last = tail[tail.length - 1];
+  var best = -1, bestAdj = -Infinity, bestHits = null;
   for (var e = lo; e <= hi; e++){
-    var score = 0;
-    for (var k = 0; k < tail.length; k++){
-      var idx = e - (tail.length - 1) + k;
-      if (idx < 0 || idx >= words.length) continue;
-      var s = simWords(tail[k], words[idx].norm);
-      score += s > 0 ? s : -0.35;
+    if (simWords(last, words[e].norm) === 0) continue;
+    var d = e - pos;
+    if (d < 0 && d >= -2) continue;                 // a recognizer revision, not a real step back
+    var r = suffixMatch(tail, e);
+    // nearby steps forward need little proof; long jumps (either way) need a real phrase
+    var need = (d >= 0 && d <= 3) ? 1 : (d > 0 && d <= 12) ? 2 : Math.abs(d) <= 60 ? 3 : 4;
+    if (need === 1 && r.hits.length === 1 && words[e].norm.length < 3) need = 2;
+    if (r.score < need * 0.85) continue;
+    var adj = r.score - (d >= 0 ? d * 0.012 : -d * 0.02);
+    if (adj > bestAdj){ bestAdj = adj; best = e; bestHits = r; }
+  }
+  if (best < 0) return;
+  var prev = pos;
+  lastMatchTime = now;
+  if (best === prev) return;
+  if (best > prev && best - prev <= 12 && advanceAt){
+    var secs = (now - advanceAt) / 1000;
+    if (secs > 0.2 && secs < 4){
+      var inst = Math.max(0.8, Math.min(6, (best - prev) / secs));
+      wps += (inst - wps) * 0.25;
     }
-    score -= Math.abs(e - pos) * 0.02;
-    if (score > bestScore) { bestScore = score; best = e; }
   }
-  var threshold = Math.max(1.6, tail.length * 0.45);
-  if (best >= 0 && bestScore >= threshold) {
-    var prev = pos;
-    pos = best;
-    lastMatchTime = now;
-    pauseFlagged = false;
-    markMissed(prev, best, tail);
-    if (settings.perfect && settings.mode === "voice") onAdvance(prev, best);
-    else justReset = false;
-  }
+  pos = best;
+  advanceAt = now;
+  pauseFlagged = false;
+  if (best < prev){                                  // went back to re-read: clear the red marks ahead
+    for (var i = best; i <= prev && i < words.length; i++){
+      if (words[i].missed){ words[i].missed = false; words[i].el.classList.remove("missed"); }
+    }
+  } else markMissed(prev, best, bestHits);
+  if (settings.perfect && settings.mode === "voice") onAdvance(prev, best);
+  else justReset = false;
 }
 
 /* words jumped over or said differently get highlighted, not halted on */
-function markMissed(prev, best, tail){
-  if (justReset || best <= prev + 1) return;
-  var hit = {};
-  for (var k = 0; k < tail.length; k++){
-    var idx = best - (tail.length - 1) + k;
-    if (idx >= 0 && idx < words.length && simWords(tail[k], words[idx].norm) > 0) hit[idx] = 1;
-  }
+function markMissed(prev, best, m){
+  if (justReset || best <= prev + 1 || !m) return;
+  var hit = {}, from = prev + 1;
+  m.hits.forEach(function(i){ hit[i] = 1; });
+  // a big burst of speech that matched all the way back: only judge the stretch it covers
+  if (m.full && m.hits.length) from = Math.max(from, Math.min.apply(null, m.hits));
   var count = 0, firstSent = -1;
-  for (var i = prev + 1; i <= best; i++){
+  for (var i = from; i <= best; i++){
     if (!hit[i] && !words[i].missed){
       words[i].missed = true; words[i].el.classList.add("missed");
       count++; if (firstSent < 0) firstSent = words[i].sent;
@@ -1056,7 +1125,8 @@ function startPrompter(s){
   resetPerfect();
   paceSamples = []; wpmEst = 0;
   var saved = positions[s.id];
-  var resumeW = (saved && saved.w > 15 && saved.w < words.length - 15 && !mirror.follower) ? saved.w : 0;
+  var sameText = saved && (saved.n == null || saved.n === words.length);
+  var resumeW = (sameText && saved.w > 15 && saved.w < words.length - 15 && !mirror.follower) ? saved.w : 0;
   pos = resumeW;
   scroller.scrollTop = resumeW ? Math.max(0, targetScrollFor(resumeW)) : 0;
   if (resumeW && settings.perfect && words[pos]) curSent = words[pos].sent;
@@ -1091,7 +1161,7 @@ function begin(){
   else if (!mirror.follower) toast("Manual mode — fixed-speed scrolling. Tap the screen, then 🖐, for voice tracking.", 3800);
 }
 function exitPrompter(){
-  if (current && words.length){ positions[current.id] = {w: nearestWordToGuide(), t: Date.now()}; save(LS_POS, positions); }
+  if (current && words.length){ positions[current.id] = {w: nearestWordToGuide(), t: Date.now(), n: words.length}; save(LS_POS, positions); }
   if (mirror.host && mirror.client){ try { mirror.client.publish(mirrorTopic("stop"), "{}"); } catch(e){} }
   running = false; playing = false; recArmed = false;
   stopRecognition(); stopMeter(); leaveFullscreen();
@@ -1272,9 +1342,10 @@ function setMode(mode){
   }
 }
 function nearestWordToGuide(){
+  ensureLayout();
   var y = scroller.scrollTop + guideY(), best = 0, bestD = Infinity;
   for (var i = 0; i < words.length; i++){
-    var d = Math.abs(words[i].el.offsetTop - y);
+    var d = Math.abs(words[i].y - y);
     if (d < bestD) { bestD = d; best = i; }
   }
   return best;
@@ -1452,18 +1523,27 @@ $("mirrorBtn").onclick = function(){
 };
 $("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
 
-/* boot: import a script or join a mirror room from the URL fragment */
+/* import a script or join a mirror room from the URL fragment: on load, and again
+   whenever a new link is opened while the app is already open in this tab */
 (function(){
   function importShared(json){
     var p = JSON.parse(json);
     if (!p || !p.x) throw new Error("bad");
+    var title = p.t || "Shared script";
     var dupe = scripts.some(function(s){ return s.text === p.x; });
-    if (!dupe){
-      scripts.push({id: String(Math.random()).slice(2), title: p.t || "Shared script", text: p.x, updated: Date.now()});
-      save(LS_SCRIPTS, scripts); renderLibrary();
+    // a new version of a script you already have (same title) replaces it instead of adding a look-alike copy
+    var older = !dupe && p.t ? scripts.filter(function(s){ return s.title === p.t; })[0] : null;
+    if (older){
+      older.text = p.x; older.updated = Date.now();
+      delete positions[older.id]; save(LS_POS, positions);
+    } else if (!dupe){
+      scripts.push({id: String(Math.random()).slice(2), title: title, text: p.x, updated: Date.now()});
     }
-    toast(dupe ? "You already have this script." : "“" + (p.t || "Shared script") + "” added from the link — tap ▶ to prompt.", 5500);
+    if (!dupe){ save(LS_SCRIPTS, scripts); renderLibrary(); }
+    toast(dupe ? "You already have this script." : older ? "Updated “" + title + "” to the new version — tap ▶ to prompt."
+      : "“" + title + "” added from the link — tap ▶ to prompt.", 5500);
   }
+  function handleHash(){
   var h = location.hash || "";
   if (h.indexOf("#s=") === 0){
     history.replaceState(null, "", location.pathname);
@@ -1479,12 +1559,16 @@ $("mirrorEndBtn").onclick = function(){ mirrorEnd(false); };
     history.replaceState(null, "", location.pathname);
     if (code) mirrorJoin(code);
   }
+  }
+  handleHash();
+  window.addEventListener("hashchange", handleHash);
 })();
 
 /* test/debug hook: simulate recognized speech without a microphone */
 window.__vc = {
-  feed: function(t){ lastHeardTime = performance.now(); matchSpoken(t.split(/\s+/).map(normWord).filter(Boolean).slice(-8)); },
+  feed: function(t){ lastHeardTime = performance.now(); matchSpoken(t.split(/[\s\-–—\/]+/).map(normWord).filter(Boolean).slice(-12)); },
   grade: gradeChunk,
+  tick: function(ts){ cancelAnimationFrame(rafId); frame(ts); cancelAnimationFrame(rafId); },  // step one frame by hand
   set: function(k, v){ settings[k] = v; applySettings(); },
   mirrorStart: mirrorStart, mirrorJoin: mirrorJoin, mirrorEnd: mirrorEnd,
   pastePub: publishPaste, pasteFetch: fetchPaste, compress: compressText, decompress: decompressText,
@@ -1494,7 +1578,8 @@ window.__vc = {
       banner: $("retryBanner").classList.contains("on"),
       bannerText: $("retryMsg").textContent,
       mirror: {code: mirror.code, host: mirror.host, follower: mirror.follower, connected: mirror.connected, remoteW: mirror.remoteW, remoteP: mirror.remoteP},
-      playing: playing,
+      playing: playing, velocity: velocity, wps: wps,
+      target: words.length ? targetScrollFor(pos) : 0, scrollTop: scrollF,
       missed: words.map(function(w,i){ return w.missed ? i : -1; }).filter(function(x){ return x >= 0; }) };
   }
 };
