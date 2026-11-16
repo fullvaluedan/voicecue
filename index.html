@@ -973,7 +973,7 @@ function frame(ts){
          measured pace, at most 2 words past the last word heard. When you stop or
          go off-script the glide stops there and the text holds; nothing coasts on. */
       var talking = lastHeardTime > 0 && (now2 - lastHeardTime) <= 1200;
-      var onScript = lastMatchTime > 0 && (now2 - lastMatchTime) <= 2500;
+      var onScript = advanceAt > 0 && (now2 - advanceAt) <= 1500;   // you're actually moving through the script
       var ahead = (talking && onScript && advanceAt) ? Math.min(2, (now2 - advanceAt) / 1000 * wps) : 0;
       if (words[pos]) ahead = Math.min(ahead, sentEnd(words[pos].sent) - pos);  // never glide past the sentence end
       var err = targetScrollFor(pos + ahead) - scrollF;
@@ -998,9 +998,10 @@ function frame(ts){
         lastDiagAt = now2;
         toast("Not hearing anything yet — make sure the right microphone is active and try speaking louder.", 5000);
       }
-      if (lastHeardTime && (now2 - lastHeardTime) < 1500 && (now2 - lastMatchTime) > 5000 && now2 - lastDiagAt > 8000 && lastTranscript) {
+      // freestyling is normal, so only a gentle hint after a long stretch off script
+      if (lastHeardTime && (now2 - lastHeardTime) < 1500 && (now2 - lastMatchTime) > 20000 && now2 - lastDiagAt > 45000 && lastTranscript) {
         lastDiagAt = now2;
-        toast("Hearing “…" + lastTranscript.trim().slice(-48) + "” — that doesn't match the script near the arrow. Scroll the script to where you're reading.", 6000);
+        toast("Holding here while you talk off script. Read the line at the arrow to carry on, or drag the script to where you are.", 5000);
       }
     }
   }
@@ -1073,27 +1074,39 @@ function stopRecognition(){
    misheard word) is allowed. Only the matched run counts, so older speech from
    before a jump (a retake, a skip ahead) doesn't drag the score down. */
 function suffixMatch(tail, e){
-  var k = tail.length - 1, i = e, score = 0, slips = 0, hits = [];
+  var k = tail.length - 1, i = e, score = 0, slips = 0, hits = [], exact = 0, clean = true;
   while (k >= 0 && i >= 0){
     var s = simWords(tail[k], words[i].norm);
-    if (s > 0){ score += s; hits.push(i); k--; i--; continue; }
+    if (s > 0){
+      score += s; hits.push(i); k--; i--;
+      if (clean && s === 1) exact++; else clean = false;   // exact: the unbroken word-for-word run at the end
+      continue;
+    }
+    clean = false;
     if (!hits.length || ++slips > 1) break;
     if (k > 0 && simWords(tail[k-1], words[i].norm) > 0) k--;          // extra spoken word
     else if (i > 0 && simWords(tail[k], words[i-1].norm) > 0) i--;     // skipped script word
     else { k--; i--; }                                                // misheard word
   }
   // full: every recent spoken word matched, so any gap before them is just speech we no longer hold
-  return {score: score, hits: hits, full: k < 0};
+  return {score: score, hits: hits, full: k < 0, exact: exact};
 }
+/* words too common to count as proof of where you are */
+var COMMON = {the:1,a:1,an:1,and:1,or:1,but:1,to:1,of:1,in:1,on:1,at:1,it:1,is:1,i:1,you:1,we:1,that:1,
+  this:1,so:1,for:1,with:1,be:1,are:1,was:1,just:1,like:1,my:1,your:1,if:1,then:1,can:1,do:1,me:1};
 var advanceAt = 0, wps = 2.4, scrollF = 0;   // when pos last moved forward; live reading pace in words/sec
 function matchSpoken(tail){
   if (!words.length) return;
   tail = tail.filter(function(w){ return !FILLERS[w]; });
   if (!tail.length) return;
   var now = performance.now();
-  // widen the forward window the longer we've been off-script, so we can re-lock after a skip
-  var reach = 40 + (lastMatchTime ? Math.min(220, Math.floor((now - lastMatchTime)/1000) * 30) : 0);
-  var lo = Math.max(matchFloor, pos - 150), hi = Math.min(words.length - 1, pos + reach);
+  /* Calm by design: freestyling or ad-libbing must never drag the script around.
+     - Keep reading forward (1 to 3 words on): your last 2 words, exactly and in order.
+     - Any bigger move, ahead or back to re-say a line: 4 words said exactly, in order
+       (with at least 2, or 3 for long jumps, that aren't little common words).
+     Common little words ("the", "and", "you") don't count toward that proof.
+     The search window stays fixed; it no longer widens while you're off script. */
+  var lo = Math.max(matchFloor, pos - 150), hi = Math.min(words.length - 1, pos + 150);
   var last = tail[tail.length - 1];
   var best = -1, bestAdj = -Infinity, bestHits = null;
   for (var e = lo; e <= hi; e++){
@@ -1101,10 +1114,16 @@ function matchSpoken(tail){
     var d = e - pos;
     if (d < 0 && d >= -2) continue;                 // a recognizer revision, not a real step back
     var r = suffixMatch(tail, e);
-    // nearby steps forward need little proof; long jumps (either way) need a real phrase
-    var need = (d >= 0 && d <= 3) ? 1 : (d > 0 && d <= 12) ? 2 : Math.abs(d) <= 60 ? 3 : 4;
-    if (need === 1 && r.hits.length === 1 && words[e].norm.length < 3) need = 2;
-    if (r.score < need * 0.85) continue;
+    if (d === 0){ if (r.score < 1.7) continue; }
+    else if (d >= 1 && d <= 3){
+      if (r.exact < 2) continue;                    // the last 2 words you said, exactly and in order
+      if (r.hits.every(function(i){ return COMMON[words[i].norm]; })) continue;
+    } else {
+      if (r.exact < 4) continue;
+      var solid = 0;
+      for (var q = 0; q < r.exact; q++) if (!COMMON[words[r.hits[q]].norm]) solid++;
+      if (solid < (Math.abs(d) <= 12 ? 2 : 3)) continue;   // "and the and the" is not a match
+    }
     var adj = r.score - (d >= 0 ? d * 0.012 : -d * 0.02);
     if (adj > bestAdj){ bestAdj = adj; best = e; bestHits = r; }
   }
