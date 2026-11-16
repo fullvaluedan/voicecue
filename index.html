@@ -103,13 +103,21 @@
   /* Guide line + dimming */
   .dim{position:absolute;left:0;right:0;pointer-events:none;z-index:2;display:none}
   #prompter.guided .dim{display:block}
-  #dimTop{top:0;height:27%;background:linear-gradient(to bottom,var(--pbg,#000) 12%,transparent)}
-  #dimBot{top:47%;bottom:0;background:linear-gradient(to top,var(--pbg,#000) 20%,transparent 88%)}
-  #guide{position:absolute;top:35%;left:0;right:0;pointer-events:none;z-index:3;display:none;height:0}
+  /* --gpos = where the reading line sits (set from settings.guidePos). Lines you just read stay
+     readable above it, lightly faded, so you can glance back and re-say them. */
+  #prompter{--gpos:50%}
+  #dimTop{top:0;height:max(0px,calc(var(--gpos) - 16%));opacity:.6;
+    background:linear-gradient(to bottom,var(--pbg,#000) 10%,transparent)}
+  #dimBot{top:calc(var(--gpos) + 14%);bottom:0;background:linear-gradient(to top,var(--pbg,#000) 20%,transparent 88%)}
+  #guide{position:absolute;top:var(--gpos);left:0;right:0;pointer-events:none;z-index:3;display:none;height:0}
   #prompter.guided #guide{display:block}
-  #guide::before,#guide::after{content:"";position:absolute;top:-7px;border:7px solid transparent}
-  #guide::before{left:6px;border-left:11px solid var(--accent);border-right:0}
-  #guide::after{right:6px;border-right:11px solid var(--accent);border-left:0}
+  /* the two arrows are drag handles: big invisible touch area, small triangle */
+  .g-handle{position:absolute;top:-24px;width:48px;height:48px;pointer-events:auto;cursor:ns-resize;touch-action:none}
+  .g-handle.l{left:0}.g-handle.r{right:0}
+  .g-handle::before{content:"";position:absolute;top:17px;border:7px solid transparent}
+  .g-handle.l::before{left:6px;border-left:11px solid var(--accent);border-right:0}
+  .g-handle.r::before{right:6px;border-right:11px solid var(--accent);border-left:0}
+  #guide.dragging::after{content:"";position:absolute;left:44px;right:44px;top:0;border-top:2px dashed var(--accent);opacity:.7}
 
   /* Clean reading mode: chrome fades out while actively rolling */
   #statusChip,#timeLeft,#progress{transition:opacity .35s ease}
@@ -240,7 +248,7 @@
   <div id="promptScroll"><div id="promptContent"></div></div>
   <div class="dim" id="dimTop"></div>
   <div class="dim" id="dimBot"></div>
-  <div id="guide"></div>
+  <div id="guide"><div class="g-handle l" aria-label="Drag to move the reading line"></div><div class="g-handle r" aria-label="Drag to move the reading line"></div></div>
   <div id="statusChip" class="paused"><span class="led"></span><span id="statusText">Ready</span></div>
   <div id="progress"></div>
   <div id="timeLeft" hidden></div>
@@ -273,6 +281,10 @@
     <div class="set-group">
       <div class="set-label"><span>Font size</span><span class="val" id="sizeVal"></span></div>
       <input type="range" id="sizeSlider" min="20" max="110" step="2" style="width:100%">
+    </div>
+    <div class="set-group">
+      <div class="set-label"><span>Reading line (or drag the arrows)</span><span class="val" id="gposVal"></span></div>
+      <input type="range" id="gposSlider" min="15" max="80" step="1" style="width:100%">
     </div>
     <div class="set-group">
       <div class="set-label"><span>Text color</span></div>
@@ -345,7 +357,7 @@ var LS_DELETED = "voicecue.deleted", LS_GH = "voicecue.gh";
 var deletedIds = loadJSON(LS_DELETED, {});   // script id -> when it was deleted (synced, so deletes spread)
 var gh = loadJSON(LS_GH, null);              // GitHub sign-in: {token, login, gistId}
 var sync = { busy: false, again: false, timer: null, at: 0, err: "" };   // defined early: the library draws it at boot
-var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false, autoFull:true, lang:"" };
+var defaults = { size:44, fg:"#FFFFFF", bg:"#000000", mirror:false, guide:true, countdown:true, mode:"voice", manualSpeed:80, orient:"auto", perfect:false, autoFull:true, lang:"", guidePos:0.5 };
 var settings = loadJSON(LS_SETTINGS, defaults);
 for (var k in defaults) if (!(k in settings)) settings[k] = defaults[k];
 /* one-time repair: an old bug could permanently trap the mode on "manual" after a single mic failure */
@@ -766,6 +778,7 @@ function applySettings(){
   prompter.classList.toggle("guided", !!settings.guide);
   $("sizeVal").textContent = settings.size + " px";
   $("sizeSlider").value = settings.size;
+  setGuidePos(settings.guidePos);
   $("speedSlider").value = settings.manualSpeed;
   $("speedVal").textContent = settings.manualSpeed + " px/s";
   $("tglMirror").classList.toggle("on", !!settings.mirror);
@@ -784,7 +797,16 @@ function applySettings(){
   renderSwatches();
 }
 
-function guideY(){ return scroller.clientHeight * 0.35; }
+function guideY(){ return scroller.clientHeight * settings.guidePos; }
+/* move the reading line (0.15 = near the top, 0.8 = near the bottom) */
+function setGuidePos(p){
+  p = Math.max(0.15, Math.min(0.8, Math.round(p * 100) / 100));
+  settings.guidePos = p;
+  prompter.style.setProperty("--gpos", (p * 100) + "%");
+  $("gposSlider").value = Math.round(p * 100);
+  $("gposVal").textContent = p <= 0.3 ? "Near the top" : p >= 0.65 ? "Near the bottom" : p >= 0.45 && p <= 0.55 ? "Middle" : Math.round(p * 100) + "% down";
+  updatePromptPadding();
+}
 function updateOrientation(){
   var wantRotate = settings.orient === "landscape" && window.innerWidth < window.innerHeight;
   prompter.classList.toggle("rotated", wantRotate);
@@ -793,15 +815,16 @@ function updateOrientation(){
 function updatePromptPadding(){
   var h = scroller.clientHeight;
   if (!h) return;
-  content.style.paddingTop = Math.round(h * 0.38) + "px";
-  content.style.paddingBottom = Math.round(h * 0.70) + "px";
+  // room above the first line and below the last, so either end can reach the reading line
+  content.style.paddingTop = Math.round(h * (settings.guidePos + 0.03)) + "px";
+  content.style.paddingBottom = Math.round(h * Math.max(0.4, 1.05 - settings.guidePos)) + "px";
 }
 /* Each word gets a y that moves smoothly through its line toward the next line,
    so the scroll glides word by word instead of jumping a whole line at a time.
    Re-measured only when the layout changes (font size, width, rotation). */
 var layoutKey = "";
 function ensureLayout(){
-  var key = content.offsetWidth + "x" + content.offsetHeight;
+  var key = content.offsetWidth + "x" + content.offsetHeight + "x" + content.style.paddingTop;  // padding moves with the reading line
   if (key === layoutKey) return;
   layoutKey = key;
   var i = 0, n = words.length;
@@ -1377,6 +1400,34 @@ function nearestWordToGuide(){
 
 /* ----- settings sheet controls ----- */
 $("sizeSlider").oninput = function(){ settings.size = +this.value; saveSettings(); applySettings(); };
+$("gposSlider").oninput = function(){ setGuidePos(+this.value / 100); saveSettings(); };
+/* drag either arrow up or down to set where your eyes hold focus */
+(function(){
+  var dragging = false;
+  function relY(ev){
+    var r = prompter.getBoundingClientRect();
+    // sideways landscape (CSS-rotated): the prompter's "down" is the screen's right-to-left
+    if (prompter.classList.contains("rotated")) return (r.right - ev.clientX) / r.width;
+    return (ev.clientY - r.top) / r.height;
+  }
+  document.querySelectorAll(".g-handle").forEach(function(h){
+    h.addEventListener("pointerdown", function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      dragging = true; h.setPointerCapture(ev.pointerId);
+      $("guide").classList.add("dragging");
+    });
+    h.addEventListener("pointermove", function(ev){ if (dragging) setGuidePos(relY(ev)); });
+    function end(){
+      if (!dragging) return;
+      dragging = false; $("guide").classList.remove("dragging");
+      saveSettings();
+      toast("Reading line saved", 1200);
+    }
+    h.addEventListener("pointerup", end);
+    h.addEventListener("pointercancel", end);
+    h.addEventListener("click", function(ev){ ev.stopPropagation(); });   // a drag isn't a tap that toggles the controls
+  });
+})();
 $("speedSlider").oninput = function(){ settings.manualSpeed = +this.value; saveSettings(); $("speedVal").textContent = settings.manualSpeed + " px/s"; };
 $("modeVoice").onclick = function(){ setMode("voice"); };
 $("modeManual").onclick = function(){ setMode("manual"); };
