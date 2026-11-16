@@ -100,6 +100,15 @@
   #prompter.mirrored #promptContent{transform:scaleX(-1)}
   #promptContent p{margin:0 0 .8em}
   #promptContent .missed{color:#FF5C5C}
+  /* Markdown: headings and [notes] are cues for you, never tracked; bold/italic are read as normal */
+  #promptContent .b{font-weight:700;color:var(--accent)}
+  #promptContent .i{font-style:italic}
+  #promptContent .md-head{font-family:'Archivo',sans-serif;font-size:.5em;font-weight:700;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--accent);margin:1.2em 0 .5em;line-height:1.3}
+  #promptContent .md-note,#promptContent .note{font-family:'Archivo',sans-serif;font-weight:500;font-style:italic;
+    opacity:.55}
+  #promptContent .md-note{font-size:.55em;margin:0 0 .9em;line-height:1.35;padding-left:.6em;border-left:3px solid var(--accent)}
+  #promptContent .note{font-size:.6em}
   /* Guide line + dimming */
   .dim{position:absolute;left:0;right:0;pointer-events:none;z-index:2;display:none}
   #prompter.guided .dim{display:block}
@@ -239,7 +248,7 @@
   </div>
   <input id="edTitle" placeholder="Script title" maxlength="80">
   <textarea id="edText" placeholder="Paste or type your script here…"></textarea>
-  <p class="ed-hint">Blank lines become paragraph breaks on the prompter. <span id="edWhere">Scripts are saved on this device only.</span></p>
+  <p class="ed-hint">Blank lines become paragraph breaks on the prompter. <strong>### Headings</strong> and <strong>[notes]</strong> show as cues and are skipped by voice tracking; <strong>**bold**</strong> and <strong>*italic*</strong> are read as normal. <span id="edWhere">Scripts are saved on this device only.</span></p>
   <div class="ed-link" id="edLink" hidden><span id="edLinkText"></span><button class="txt-btn ghost" id="edCopyLink">Copy link</button></div>
 </div>
 
@@ -742,30 +751,87 @@ var wakeLock = null;
 
 var prompter = $("prompter"), scroller = $("promptScroll"), content = $("promptContent");
 
+/* Scripts can carry light Markdown:
+     # / ## / ### Heading     a section label, shown small, never read aloud or tracked
+     [react: ...] or [note]   a note to yourself, shown dim, never tracked (whole line or inline)
+     **bold**  *italic*       read and tracked as normal, just styled
+     ---                      dropped
+   Blank lines still make paragraphs. */
+var INLINE_MD = /\[[^\]\n]*\]|\*\*([^*\n]+?)\*\*|__([^_\n]+?)__|\*([^*\s\n][^*\n]*?)\*|`([^`\n]+)`/g;
+function inlineSegments(text){
+  var out = [], last = 0, m;
+  INLINE_MD.lastIndex = 0;
+  while ((m = INLINE_MD.exec(text))){
+    if (m.index > last) out.push({t: text.slice(last, m.index)});
+    if (m[0].charAt(0) === "[") out.push({t: m[0], note: true});
+    else if (m[1] != null || m[2] != null) out.push({t: m[1] != null ? m[1] : m[2], cls: "b"});
+    else if (m[3] != null) out.push({t: m[3], cls: "i"});
+    else out.push({t: m[4]});
+    last = INLINE_MD.lastIndex;
+  }
+  if (last < text.length) out.push({t: text.slice(last)});
+  return out;
+}
 function buildContent(text){
   content.innerHTML = "";
   words = []; sentStartArr = [0]; layoutKey = "";
   var sentIdx = 0, pendingBreak = false;
-  text.split(/\n\s*\n/).forEach(function(para){
-    var p = document.createElement("p");
-    var raws = para.split(/\s+/).filter(Boolean);
-    raws.forEach(function(raw, i){
-      var span = document.createElement("span");
-      span.textContent = raw + " ";
-      p.appendChild(span);
-      // "AI-powered" or "word—word" is two spoken words, so it becomes two tracked words on one span
-      var parts = raw.split(/[-–—\/]+/).map(normWord).filter(Boolean);
-      if (!parts.length) return;
-      if (pendingBreak){ sentIdx++; sentStartArr[sentIdx] = words.length; pendingBreak = false; }
-      var endS = /[.!?…]["'’”)\]]*$/.test(raw);
-      var pauseOK = endS || /[,;:—–]["'’”)\]]*$/.test(raw) || raw.slice(-1) === "-" || i === raws.length - 1;
-      parts.forEach(function(n, j){
-        words.push({ norm:n, el:span, sent:sentIdx, pauseOK: j === parts.length - 1 && pauseOK, missed:false, y:0 });
-      });
-      if (endS) pendingBreak = true;
+  function addNote(tag, txt, cls){
+    var el = document.createElement(tag); el.className = cls;
+    inlineSegments(txt).forEach(function(seg){
+      var s = document.createElement("span"); s.textContent = seg.note ? seg.t : seg.t;
+      if (seg.cls) s.className = seg.cls;
+      el.appendChild(s);
     });
-    pendingBreak = true; // a paragraph break always ends a sentence
-    if (p.childNodes.length) content.appendChild(p);
+    content.appendChild(el);
+    pendingBreak = true;               // a note or heading ends the sentence before it
+  }
+  function addParagraph(para){
+    var p = document.createElement("p"), firstWord = words.length;
+    inlineSegments(para.replace(/\s*\n\s*/g, " ")).forEach(function(seg){
+      if (seg.note){
+        var n = document.createElement("span"); n.className = "note"; n.textContent = seg.t;
+        p.appendChild(n); return;
+      }
+      seg.t.split(/(\s+)/).forEach(function(raw){
+        if (!raw) return;
+        if (/^\s+$/.test(raw)){ p.appendChild(document.createTextNode(" ")); return; }
+        var span = document.createElement("span");
+        span.textContent = raw;
+        if (seg.cls) span.className = seg.cls;
+        p.appendChild(span);
+        var endS = /[.!?…]["'’”)\]]*$/.test(raw);
+        var pauseOK = endS || /[,;:—–]["'’”)\]]*$/.test(raw) || raw.slice(-1) === "-";
+        // "AI-powered" or "word—word" is two spoken words, so it becomes two tracked words on one span
+        var parts = raw.split(/[-–—\/]+/).map(normWord).filter(Boolean);
+        if (!parts.length){
+          // bare punctuation after styled text ("**However**,"): it belongs to the word before
+          if (words.length > firstWord && pauseOK) words[words.length - 1].pauseOK = true;
+          if (words.length > firstWord && endS) pendingBreak = true;
+          return;
+        }
+        if (pendingBreak){ sentIdx++; sentStartArr[sentIdx] = words.length; pendingBreak = false; }
+        parts.forEach(function(n, j){
+          words.push({ norm:n, el:span, sent:sentIdx, pauseOK: j === parts.length - 1 && pauseOK, missed:false, y:0 });
+        });
+        if (endS) pendingBreak = true;
+      });
+    });
+    if (words.length > firstWord) words[words.length - 1].pauseOK = true;   // a paragraph end is a fine place to pause
+    pendingBreak = true;                                                     // and always ends a sentence
+    if (p.textContent.trim()) content.appendChild(p);
+  }
+  text.split(/\n\s*\n/).forEach(function(block){
+    var buf = [];
+    function flush(){ if (buf.length){ addParagraph(buf.join("\n")); buf = []; } }
+    block.split("\n").forEach(function(line){
+      var t = line.trim(), h;
+      if ((h = t.match(/^#{1,6}\s+(.*)$/))){ flush(); addNote("div", h[1], "md-head"); }
+      else if (/^\[[^\]]*\]$/.test(t)){ flush(); addNote("div", t, "md-note"); }
+      else if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)){ flush(); }
+      else buf.push(line);
+    });
+    flush();
   });
 }
 function sentEnd(sent){ return (sentStartArr[sent + 1] || words.length) - 1; }
